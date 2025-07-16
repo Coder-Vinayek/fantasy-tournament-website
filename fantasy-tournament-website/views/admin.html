@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Fantasy Tournament</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>Admin Dashboard</h1>
+            <nav class="nav">
+                <a href="/tournaments">Tournaments</a>
+                <a href="/wallet">Wallet</a>
+                <a href="/admin">Admin</a>
+                <span id="username-display"></span>
+                <button id="logoutBtn" class="btn btn-small">Logout</button>
+            </nav>
+        </header>
+
+        <main class="main-content">
+            <div class="admin-tabs">
+                <button class="tab-btn active" data-tab="analytics">
+                    Analytics
+                </button>
+                <button class="tab-btn" data-tab="users">
+                    Users
+                </button>
+                <button class="tab-btn" data-tab="tournaments">
+                    Tournaments
+                </button>
+                <button class="tab-btn" data-tab="transactions">
+                    Admin Actions
+                </button>
+                <button class="tab-btn" data-tab="create-tournament">
+                    Create Tournament
+                </button>
+            </div>
+
+            <!-- Analytics Tab - NEW -->
+            <div id="analyticsTab" class="tab-content active">
+                <h3 class="section-title">📊 Platform Analytics</h3>
+
+                <!-- Key Metrics -->
+                <div class="analytics-grid">
+                    <div class="metric-card users-card">
+                        <div class="metric-label">Total Users</div>
+                        <div class="metric-value" id="totalUsers">0</div>
+                        <div class="metric-change" id="recentUsersChange">
+                            <span id="recentUsers">0</span> new this month
+                        </div>
+                    </div>
+
+                    <div class="metric-card tournaments-card">
+                        <div class="metric-label">Total Tournaments</div>
+                        <div class="metric-value" id="totalTournaments">0</div>
+                        <div class="metric-change">
+                            <span id="activeTournaments">0</span> active tournaments
+                        </div>
+                    </div>
+
+                    <div class="metric-card revenue-card">
+                        <div class="metric-label">Total Revenue</div>
+                        <div class="metric-value">$<span id="totalRevenue">0</span></div>
+                        <div class="metric-change">
+                            Entry fees: $<span id="entryFees">0</span>
+                        </div>
+                    </div>
+
+                    <div class="metric-card profit-card">
+                        <div class="metric-label">Total Profit</div>
+                        <div class="metric-value">$<span id="totalProfit">0</span></div>
+                        <div class="metric-change">
+                            Withdrawals: $<span id="totalWithdrawals">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Popular Tournament -->
+                <div class="analytics-section">
+                    <div class="metric-card popular-tournament">
+                        <div class="metric-label">🔥 Most Popular Tournament</div>
+                        <div class="metric-value" id="popularTournamentName">Loading...</div>
+                        <div class="metric-change">
+                            <span id="popularTournamentStats">0/0 participants</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Activity -->
+                <div class="analytics-section">
+                    <h3 class="section-title">📈 Recent Admin Actions (Last 7 Days)</h3>
+                    <div class="chart-container">
+                        <div id="recentActivity">
+                            <!-- Admin activity data will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tournament Status -->
+                <div class="analytics-section">
+                    <h3 class="section-title">🏆 Tournament Status Distribution</h3>
+                    <div class="chart-container">
+                        <div id="tournamentStatusChart">
+                            <!-- Status data will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Users Tab -->
+            <div id="usersTab" class="tab-content">
+                <h3>Manage Users</h3>
+                <div id="usersContainer" class="admin-table-container">
+                    <!-- Users table will be loaded here -->
+                </div>
+            </div>
+
+            <!-- Tournaments Tab -->
+            <div id="tournamentsTab" class="tab-content">
+                <h3>Manage Tournaments</h3>
+                <div id="adminTournamentsContainer" class="admin-table-container">
+                    <!-- Tournaments table will be loaded here -->
+                </div>
+            </div>
+
+            <!-- Transactions Tab -->
+            <div id="transactionsTab" class="tab-content">
+                <h3>Admin Transaction History</h3>
+                <p class="admin-info-text">
+                    📋 Shows only transactions performed by admin (awarding winnings, etc.).
+                    User personal transactions (deposits/withdrawals) are private.
+                </p>
+                <div id="adminTransactionsContainer" class="admin-table-container">
+                    <!-- Admin transactions table will be loaded here -->
+                </div>
+            </div>
+
+            <!-- Create Tournament Tab - NO INLINE CSS -->
+            <div id="createTournamentTab" class="tab-content">
+                <div class="create-tournament-header">
+                    <h3 class="create-tournament-title">
+                        🎯 Create New Tournament
+                    </h3>
+                    <p class="create-tournament-description">
+                        Fill out the form below to create a new tournament that users can register for. All fields are
+                        required.
+                    </p>
+                </div>
+
+                <form id="createTournamentForm" class="form admin-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="tournamentName">🏆 Tournament Name:</label>
+                            <input type="text" id="tournamentName" name="name"
+                                placeholder="e.g., Fantasy Football Championship" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="entryFee">💰 Entry Fee ($):</label>
+                            <input type="number" id="entryFee" name="entry_fee" min="1" step="0.01" placeholder="10.00"
+                                required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="prizePool">🎁 Prize Pool ($):</label>
+                            <input type="number" id="prizePool" name="prize_pool" min="1" step="0.01"
+                                placeholder="500.00" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="maxParticipants">👥 Max Participants:</label>
+                            <input type="number" id="maxParticipants" name="max_participants" min="2" placeholder="50"
+                                required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="startDate">📅 Start Date:</label>
+                            <input type="datetime-local" id="startDate" name="start_date" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="endDate">🏁 End Date:</label>
+                            <input type="datetime-local" id="endDate" name="end_date" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="description">📝 Description:</label>
+                        <textarea id="description" name="description" rows="4"
+                            placeholder="Describe your tournament... What makes it exciting? What are the rules?"
+                            required></textarea>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary create-tournament-btn">
+                        🚀 Create Tournament
+                    </button>
+                </form>
+            </div>
+
+            <!-- Update Winnings Modal -->
+            <div id="winningsModal" class="modal">
+                <div class="modal-content">
+                    <span class="close">&times;</span>
+                    <h3>Update User Winnings</h3>
+                    <form id="updateWinningsForm" class="form">
+                        <input type="hidden" id="selectedUserId">
+                        <div class="form-group">
+                            <label for="winningsAmount">Winnings Amount ($):</label>
+                            <input type="number" id="winningsAmount" name="amount" min="0.01" step="0.01" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Update Winnings</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Tournament Participants Modal -->
+            <div id="participantsModal" class="participant-modal">
+                <div class="participant-modal-content">
+                    <span class="close" onclick="closeParticipantsModal()">&times;</span>
+                    <h3 id="participantsModalTitle">Tournament Participants</h3>
+                    <div id="participantsContainer">
+                        <!-- Participants will be loaded here -->
+                    </div>
+                </div>
+            </div>
+
+            <div id="message" class="message"></div>
+        </main>
+
+        <footer class="footer">
+            <p>&copy; 2025 Fantasy Tournament. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <script src="/js/admin.js"></script>
+</body>
+
+</html>

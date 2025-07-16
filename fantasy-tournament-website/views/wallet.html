@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wallet - Fantasy Tournament</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>Fantasy Tournament</h1>
+            <nav class="nav">
+                <a href="/tournaments">Tournaments</a>
+                <a href="/wallet">Wallet</a>
+                <span id="username-display"></span>
+                <button id="logoutBtn" class="btn btn-small">Logout</button>
+            </nav>
+        </header>
+        
+        <main class="main-content">
+            <div class="page-header">
+                <h2>My Wallet</h2>
+            </div>
+            
+            <div class="wallet-overview">
+                <div class="balance-card">
+                    <h3>Wallet Balance</h3>
+                    <p class="balance-amount">$<span id="walletBalance">0.00</span></p>
+                    <p class="balance-note">Use for tournament entries</p>
+                </div>
+                
+                <div class="balance-card">
+                    <h3>Winnings Balance</h3>
+                    <p class="balance-amount">$<span id="winningsBalance">0.00</span></p>
+                    <p class="balance-note">Available for withdrawal</p>
+                </div>
+            </div>
+            
+            <div class="wallet-actions">
+                <div class="action-card">
+                    <h3>Deposit Money</h3>
+                    <form id="depositForm" class="form">
+                        <div class="form-group">
+                            <label for="depositAmount">Amount ($):</label>
+                            <input type="number" id="depositAmount" name="amount" min="1" step="0.01" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Deposit</button>
+                    </form>
+                </div>
+                
+                <div class="action-card">
+                    <h3>Withdraw Winnings</h3>
+                    <form id="withdrawForm" class="form">
+                        <div class="form-group">
+                            <label for="withdrawAmount">Amount ($):</label>
+                            <input type="number" id="withdrawAmount" name="amount" min="1" step="0.01" required>
+                        </div>
+                        <button type="submit" class="btn btn-secondary">Withdraw</button>
+                    </form>
+                    <p class="note">* You can only withdraw from winnings balance</p>
+                </div>
+            </div>
+            
+            <div class="transactions-section">
+                <h3>Recent Transactions</h3>
+                <div id="transactionsContainer" class="transactions-list">
+                    <!-- Transactions will be loaded here -->
+                </div>
+            </div>
+            
+            <div id="message" class="message"></div>
+        </main>
+        
+        <footer class="footer">
+            <p>&copy; 2025 Fantasy Tournament. All rights reserved.</p>
+        </footer>
+    </div>
+    
+    <script src="/js/wallet.js"></script>
+</body>
+</html>

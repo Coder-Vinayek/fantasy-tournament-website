@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Fantasy Tournament</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>Fantasy Tournament</h1>
+            <nav class="nav">
+                <a href="/">Home</a>
+                <a href="/register">Register</a>
+            </nav>
+        </header>
+        
+        <main class="main-content">
+            <div class="auth-form">
+                <h2>Login</h2>
+                <form id="loginForm" class="form">
+                    <div class="form-group">
+                        <label for="username">Username:</label>
+                        <input type="text" id="username" name="username" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="password">Password:</label>
+                        <input type="password" id="password" name="password" required>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">Login</button>
+                </form>
+                
+                <div id="message" class="message"></div>
+                
+                <p class="auth-link">
+                    Don't have an account? <a href="/register">Register here</a>
+                </p>
+            </div>
+        </main>
+        
+        <footer class="footer">
+            <p>&copy; 2025 Fantasy Tournament. All rights reserved.</p>
+        </footer>
+    </div>
+    
+    <script src="/js/auth.js"></script>
+</body>
+</html>
