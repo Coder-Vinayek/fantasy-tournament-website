@@ -76,14 +76,14 @@ document.addEventListener('DOMContentLoaded', function() {
     function createTournamentCard(tournament) {
         const card = document.createElement('div');
         card.className = 'tournament-card';
-
+    
         const startDate = new Date(tournament.start_date).toLocaleString();
         const endDate = new Date(tournament.end_date).toLocaleString();
         
         const statusClass = `status-${tournament.status}`;
         const isRegistered = tournament.is_registered === 1;
         const isFull = tournament.current_participants >= tournament.max_participants;
-
+    
         card.innerHTML = `
             <h3>${tournament.name}</h3>
             <div class="tournament-info">
@@ -96,31 +96,43 @@ document.addEventListener('DOMContentLoaded', function() {
                 ${tournament.description ? `<p><strong>Description:</strong> ${tournament.description}</p>` : ''}
             </div>
             <div class="tournament-actions">
-                ${getActionButton(tournament, isRegistered, isFull)}
+                ${getActionButtons(tournament, isRegistered, isFull)}
             </div>
         `;
-
+    
         return card;
     }
-
-    function getActionButton(tournament, isRegistered, isFull) {
+    
+    function getActionButtons(tournament, isRegistered, isFull) {
+        let buttons = '';
+        
         if (isRegistered) {
-            return '<button class="btn btn-success" disabled>Registered ✓</button>';
+            buttons += `<button class="btn btn-success enter-tournament-btn" data-tournament-id="${tournament.id}">Enter Tournament 🎮</button>`;
+            buttons += '<span class="registered-indicator">✓ Registered</span>';
+        } else {
+            if (isFull) {
+                buttons += '<button class="btn btn-secondary" disabled>Tournament Full</button>';
+            } else if (tournament.status === 'upcoming') {
+                buttons += `<button class="btn btn-primary register-btn" data-tournament-id="${tournament.id}" data-entry-fee="${tournament.entry_fee}">Register ($${tournament.entry_fee})</button>`;
+            } else {
+                buttons += '<button class="btn btn-secondary" disabled>Registration Closed</button>';
+            }
         }
         
-        if (isFull) {
-            return '<button class="btn btn-secondary" disabled>Tournament Full</button>';
-        }
-        
-        if (tournament.status === 'upcoming') {
-            return `<button class="btn btn-primary register-btn" data-tournament-id="${tournament.id}" data-entry-fee="${tournament.entry_fee}">Register ($${tournament.entry_fee})</button>`;
-        }
-        
-        return '<button class="btn btn-secondary" disabled>Registration Closed</button>';
+        return buttons;
     }
+    
 
     // Tournament registration handler
     document.addEventListener('click', async function(e) {
+        if (e.target.classList.contains('enter-tournament-btn')) {
+            const tournamentId = e.target.getAttribute('data-tournament-id');
+            
+            // Navigate to tournament lobby
+            window.location.href = `/tournament/${tournamentId}`;
+        }
+        
+        // Existing register-btn handler remains the same...
         if (e.target.classList.contains('register-btn')) {
             const tournamentId = e.target.getAttribute('data-tournament-id');
             const entryFee = parseFloat(e.target.getAttribute('data-entry-fee'));
@@ -129,7 +141,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!confirm(`Register for this tournament? Entry fee: $${entryFee}`)) {
                 return;
             }
-
+    
             try {
                 const response = await fetch('/api/tournaments/register', {
                     method: 'POST',
@@ -138,9 +150,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     },
                     body: JSON.stringify({ tournamentId: parseInt(tournamentId) })
                 });
-
+    
                 const result = await response.json();
-
+    
                 if (result.success) {
                     showMessage(result.message, 'success');
                     // Reload tournaments and user info
