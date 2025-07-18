@@ -63,6 +63,42 @@ function initializeDatabase() {
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )`);
 
+            // Tournament Chat Messages table
+            db.run(`CREATE TABLE IF NOT EXISTS tournament_chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tournament_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tournament_id) REFERENCES tournaments (id),
+    FOREIGN KEY (user_id) REFERENCES users (id)
+)`);
+
+            // Tournament Announcements table
+            db.run(`CREATE TABLE IF NOT EXISTS tournament_announcements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tournament_id INTEGER NOT NULL,
+    admin_id INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tournament_id) REFERENCES tournaments (id),
+    FOREIGN KEY (admin_id) REFERENCES users (id)
+)`);
+
+            // Tournament Match Details table
+            db.run(`CREATE TABLE IF NOT EXISTS tournament_match_details (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tournament_id INTEGER UNIQUE NOT NULL,
+    room_id TEXT,
+    room_password TEXT,
+    match_start_time DATETIME,
+    game_server TEXT,
+    updated_by INTEGER,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tournament_id) REFERENCES tournaments (id),
+    FOREIGN KEY (updated_by) REFERENCES users (id)
+)`);
+
             function checkExpiredBans() {
                 db.run(`UPDATE users 
                         SET ban_status = 'none', 
@@ -78,11 +114,11 @@ function initializeDatabase() {
                         }
                     });
             }
-            
+
             // Check expired bans every minute
             setInterval(checkExpiredBans, 60000);
             module.exports = { checkExpiredBans };
-         
+
             // Create admin user if not exists
             db.get("SELECT COUNT(*) as count FROM users WHERE is_admin = 1", (err, row) => {
                 if (err) {
@@ -106,6 +142,8 @@ function initializeDatabase() {
                         });
                 }
             });
+
+
 
             console.log("Database initialized successfully");
             resolve();
