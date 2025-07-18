@@ -38,6 +38,8 @@
                 <button class="tab-btn" data-tab="create-tournament">
                     Create Tournament
                 </button>
+                <button class="tab-btn" data-tab="manage-tournaments">
+                    Manage Tournaments</button>
             </div>
 
             <!-- Analytics Tab - NEW -->
@@ -203,6 +205,172 @@
                         🚀 Create Tournament
                     </button>
                 </form>
+            </div>
+
+
+            <!-- NEW TAB CONTENT: Tournament Management -->
+            <div id="manageTournamentsTab" class="tab-content">
+                <div class="tournament-management-header">
+                    <h3 class="tournament-management-title">
+                        🎮 Tournament Management Center
+                    </h3>
+                    <p class="tournament-management-description">
+                        Control active tournaments, add match details, post announcements, and manage tournament
+                        settings.
+                    </p>
+                </div>
+
+                <!-- Tournament Selection -->
+                <div class="tournament-selector-section">
+                    <h4>📋 Select Tournament to Manage</h4>
+                    <div class="tournament-selector-container">
+                        <select id="manageTournamentSelect" class="tournament-select">
+                            <option value="">Select a tournament...</option>
+                            <!-- Tournaments will be loaded here -->
+                        </select>
+                        <button id="loadTournamentBtn" class="btn btn-primary">Load Tournament</button>
+                    </div>
+                </div>
+
+                <!-- Tournament Management Panels (Hidden until tournament selected) -->
+                <div id="tournamentManagementPanels" class="tournament-management-panels" style="display: none;">
+
+                    <!-- Tournament Overview -->
+                    <div class="management-panel tournament-overview-panel">
+                        <div class="panel-header">
+                            <h4>🏆 Tournament Overview</h4>
+                            <button id="refreshTournamentBtn" class="btn btn-small btn-secondary">🔄 Refresh</button>
+                        </div>
+                        <div class="tournament-overview-content">
+                            <div class="overview-grid">
+                                <div class="overview-item">
+                                    <span class="overview-label">Tournament Name:</span>
+                                    <span id="manageTournamentName" class="overview-value">-</span>
+                                </div>
+                                <div class="overview-item">
+                                    <span class="overview-label">Status:</span>
+                                    <span id="manageTournamentStatus" class="overview-value">-</span>
+                                </div>
+                                <div class="overview-item">
+                                    <span class="overview-label">Participants:</span>
+                                    <span id="manageTournamentParticipants" class="overview-value">0/0</span>
+                                </div>
+                                <div class="overview-item">
+                                    <span class="overview-label">Prize Pool:</span>
+                                    <span id="manageTournamentPrize" class="overview-value">$0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Match Details Management -->
+                    <div class="management-panel match-details-panel">
+                        <div class="panel-header">
+                            <h4>🎯 Match Details Management</h4>
+                        </div>
+                        <div class="match-details-content">
+                            <form id="matchDetailsForm" class="match-details-form">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="roomIdInput">🏠 Room ID:</label>
+                                        <input type="text" id="roomIdInput" name="room_id"
+                                            placeholder="Enter room ID..." maxlength="50">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="roomPasswordInput">🔐 Room Password:</label>
+                                        <input type="text" id="roomPasswordInput" name="room_password"
+                                            placeholder="Enter room password..." maxlength="50">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="matchStartTimeInput">⏰ Match Start Time:</label>
+                                        <input type="datetime-local" id="matchStartTimeInput" name="match_start_time">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="gameServerInput">🖥️ Game Server:</label>
+                                        <input type="text" id="gameServerInput" name="game_server"
+                                            placeholder="e.g., US East, EU West..." maxlength="50">
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn btn-primary match-details-btn">
+                                    💾 Update Match Details
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Announcements Management -->
+                    <div class="management-panel announcements-panel">
+                        <div class="panel-header">
+                            <h4>📢 Announcements Management</h4>
+                        </div>
+                        <div class="announcements-content">
+                            <!-- Post New Announcement -->
+                            <div class="post-announcement-section">
+                                <h5>📝 Post New Announcement</h5>
+                                <form id="announcementForm" class="announcement-form">
+                                    <div class="form-group">
+                                        <textarea id="announcementText" name="message"
+                                            placeholder="Type your announcement here... (max 500 characters)" rows="3"
+                                            maxlength="500" required></textarea>
+                                        <small class="char-counter">
+                                            <span id="announcementCharCount">0</span>/500 characters
+                                        </small>
+                                    </div>
+                                    <button type="submit" class="btn btn-warning announcement-btn">
+                                        📢 Post Announcement
+                                    </button>
+                                </form>
+                            </div>
+
+                            <!-- Recent Announcements -->
+                            <div class="recent-announcements-section">
+                                <h5>📋 Recent Announcements</h5>
+                                <div id="recentAnnouncementsList" class="recent-announcements-list">
+                                    <!-- Recent announcements will be loaded here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tournament Actions -->
+                    <div class="management-panel tournament-actions-panel">
+                        <div class="panel-header">
+                            <h4>⚡ Tournament Actions</h4>
+                        </div>
+                        <div class="tournament-actions-content">
+                            <div class="action-buttons-grid">
+                                <button id="viewTournamentLobbyBtn" class="btn btn-info action-btn">
+                                    👁️ View Tournament Lobby
+                                </button>
+                                <button id="updateTournamentStatusBtn" class="btn btn-warning action-btn">
+                                    🔄 Update Tournament Status
+                                </button>
+                                <button id="exportParticipantsBtn" class="btn btn-secondary action-btn">
+                                    📊 Export Participants
+                                </button>
+                                <button id="sendBulkMessageBtn" class="btn btn-primary action-btn">
+                                    💬 Send Bulk Message
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Chat Monitor -->
+                    <div class="management-panel chat-monitor-panel">
+                        <div class="panel-header">
+                            <h4>💬 Live Chat Monitor</h4>
+                            <button id="refreshChatBtn" class="btn btn-small btn-secondary">🔄 Refresh</button>
+                        </div>
+                        <div class="chat-monitor-content">
+                            <div id="liveChatMessages" class="live-chat-messages">
+                                <!-- Live chat messages will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
             </div>
 
             <!-- Update Winnings Modal -->
