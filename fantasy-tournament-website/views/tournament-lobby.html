@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tournament Lobby - Fantasy Tournament</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>Fantasy Tournament</h1>
+            <nav class="nav">
+                <a href="/tournaments">← Back to Tournaments</a>
+                <a href="/wallet">Wallet</a>
+                <span id="username-display"></span>
+                <button id="logoutBtn" class="btn btn-small">Logout</button>
+            </nav>
+        </header>
+        
+        <main class="main-content">
+            <!-- Tournament Header -->
+            <div class="tournament-lobby-header">
+                <div class="tournament-info-card">
+                    <h2 id="tournamentName">Loading Tournament...</h2>
+                    <div class="tournament-status-badge">
+                        <span id="tournamentStatus" class="status-badge">upcoming</span>
+                    </div>
+                </div>
+                
+                <div class="tournament-details-grid">
+                    <div class="detail-item">
+                        <span class="detail-label">🏆 Prize Pool</span>
+                        <span class="detail-value" id="prizePool">$0</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">👥 Players</span>
+                        <span class="detail-value" id="participantCount">0/0</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">📅 Start Time</span>
+                        <span class="detail-value" id="startTime">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">⏰ Status</span>
+                        <span class="detail-value" id="timeRemaining">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Lobby Content -->
+            <div class="lobby-content-grid">
+                <!-- Left Panel: Chat -->
+                <div class="lobby-panel chat-panel">
+                    <div class="panel-header">
+                        <h3>💬 Tournament Chat</h3>
+                        <span class="online-count">
+                            <span id="onlineCount">0</span> online
+                        </span>
+                    </div>
+                    
+                    <div class="chat-container">
+                        <div id="chatMessages" class="chat-messages">
+                            <!-- Chat messages will appear here -->
+                        </div>
+                        
+                        <div class="chat-input-container">
+                            <input type="text" id="chatInput" placeholder="Type a message..." maxlength="200">
+                            <button id="sendMessageBtn" class="btn btn-primary">Send</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Center Panel: Match Info -->
+                <div class="lobby-panel match-panel">
+                    <div class="panel-header">
+                        <h3>🎮 Match Information</h3>
+                    </div>
+                    
+                    <div class="match-info-content">
+                        <div id="adminAnnouncements" class="admin-announcements">
+                            <h4>📢 Admin Announcements</h4>
+                            <div id="announcementsList" class="announcements-list">
+                                <p class="no-announcements">No announcements yet</p>
+                            </div>
+                        </div>
+                        
+                        <div id="matchDetails" class="match-details">
+                            <h4>🎯 Match Details</h4>
+                            <div class="match-detail-card">
+                                <div class="match-detail-item">
+                                    <span class="match-label">Room ID:</span>
+                                    <span id="roomId" class="match-value">Not assigned</span>
+                                </div>
+                                <div class="match-detail-item">
+                                    <span class="match-label">Password:</span>
+                                    <span id="roomPassword" class="match-value">Not assigned</span>
+                                </div>
+                                <div class="match-detail-item">
+                                    <span class="match-label">Match Start:</span>
+                                    <span id="matchStartTime" class="match-value">TBD</span>
+                                </div>
+                                <div class="match-detail-item">
+                                    <span class="match-label">Server:</span>
+                                    <span id="gameServer" class="match-value">TBD</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Panel: Players -->
+                <div class="lobby-panel players-panel">
+                    <div class="panel-header">
+                        <h3>👥 Registered Players</h3>
+                        <span class="refresh-btn" id="refreshPlayers">🔄</span>
+                    </div>
+                    
+                    <div class="players-container">
+                        <div id="playersList" class="players-list">
+                            <!-- Players will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tournament Rules/Description -->
+            <div class="tournament-description-panel">
+                <div class="panel-header collapsible-header" id="rulesToggle">
+                    <h3>📋 Tournament Rules & Description</h3>
+                    <span class="toggle-icon">▼</span>
+                </div>
+                <div id="rulesContent" class="rules-content">
+                    <p id="tournamentDescription">Loading tournament description...</p>
+                </div>
+            </div>
+
+            <div id="message" class="message"></div>
+        </main>
+        
+        <footer class="footer">
+            <p>&copy; 2025 Fantasy Tournament. All rights reserved.</p>
+        </footer>
+    </div>
+    
+    <script src="/js/tournament-lobby.js"></script>
+</body>
+</html>
