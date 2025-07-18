@@ -127,6 +127,11 @@ app.get('/admin', requireAdmin, (req, res) => {
     res.sendFile(path.join(__dirname, 'views', 'admin.html'));
 });
 
+app.get('/tournament/:id', requireAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'views', 'tournament-lobby.html'));
+});
+
+
 // API Routes - Authentication
 app.post('/api/register', (req, res) => {
     const { username, email, password } = req.body;
@@ -476,6 +481,78 @@ app.post('/api/admin/update-winnings', requireAdmin, (req, res) => {
     });
 });
 
+// Delete Tournament API Route 
+app.delete('/api/admin/tournaments/:id', requireAdmin, (req, res) => {
+    const tournamentId = parseInt(req.params.id);
+    
+    if (!tournamentId || isNaN(tournamentId)) {
+        return res.status(400).json({ error: 'Invalid tournament ID' });
+    }
+    
+    // Start transaction to handle all deletions
+    db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+        
+        // First, get tournament details for confirmation message
+        db.get('SELECT * FROM tournaments WHERE id = ?', [tournamentId], (err, tournament) => {
+            if (err) {
+                db.run('ROLLBACK');
+                console.error('Error fetching tournament:', err);
+                return res.status(500).json({ error: 'Database error while fetching tournament' });
+            }
+            
+            if (!tournament) {
+                db.run('ROLLBACK');
+                return res.status(404).json({ error: 'Tournament not found' });
+            }
+            
+            // Delete tournament registrations first (foreign key constraint)
+            db.run('DELETE FROM tournament_registrations WHERE tournament_id = ?', [tournamentId], function(err) {
+                if (err) {
+                    db.run('ROLLBACK');
+                    console.error('Error deleting tournament registrations:', err);
+                    return res.status(500).json({ error: 'Failed to delete tournament registrations' });
+                }
+                
+                const registrationsDeleted = this.changes;
+                
+                // Delete the tournament itself
+                db.run('DELETE FROM tournaments WHERE id = ?', [tournamentId], function(err) {
+                    if (err) {
+                        db.run('ROLLBACK');
+                        console.error('Error deleting tournament:', err);
+                        return res.status(500).json({ error: 'Failed to delete tournament' });
+                    }
+                    
+                    if (this.changes === 0) {
+                        db.run('ROLLBACK');
+                        return res.status(404).json({ error: 'Tournament not found or already deleted' });
+                    }
+                    
+                    // Commit transaction
+                    db.run('COMMIT', (err) => {
+                        if (err) {
+                            console.error('Error committing tournament deletion:', err);
+                            return res.status(500).json({ error: 'Failed to commit deletion' });
+                        }
+                        
+                        // Success response
+                        res.json({ 
+                            success: true, 
+                            message: `Tournament "${tournament.name}" deleted successfully.`,
+                            details: {
+                                tournamentName: tournament.name,
+                                registrationsDeleted: registrationsDeleted
+                            }
+                        });
+                    });
+                });
+            });
+        });
+    });
+});
+
+
 // Ban User API Route
 app.post('/api/admin/ban-user', requireAdmin, (req, res) => {
     const { userId, banType, banReason, banExpiry } = req.body;
@@ -710,6 +787,370 @@ app.get('/api/admin/tournament/:id/participants', requireAdmin, (req, res) => {
             return res.status(500).json({ error: 'Failed to get tournament participants' });
         }
         res.json(participants);
+    });
+});
+
+
+// Get Tournament Lobby Data
+app.get('/api/tournament/:id/lobby', requireAuth, (req, res) => {
+    const tournamentId = req.params.id;
+    
+    // First check if user is registered for this tournament
+    db.get(`SELECT * FROM tournament_registrations 
+            WHERE user_id = ? AND tournament_id = ?`, 
+        [req.session.userId, tournamentId], (err, registration) => {
+            if (err) {
+                return res.status(500).json({ error: 'Database error' });
+            }
+            
+            if (!registration) {
+                return res.status(403).json({ error: 'You are not registered for this tournament' });
+            }
+            
+            // Get tournament details
+            db.get('SELECT * FROM tournaments WHERE id = ?', [tournamentId], (err, tournament) => {
+                if (err) {
+                    return res.status(500).json({ error: 'Failed to get tournament' });
+                }
+                
+                if (!tournament) {
+                    return res.status(404).json({ error: 'Tournament not found' });
+                }
+                
+                // Get match details if exists
+                db.get('SELECT * FROM tournament_match_details WHERE tournament_id = ?', 
+                    [tournamentId], (err, matchDetails) => {
+                        // Don't fail if no match details exist
+                        if (err) {
+                            console.error('Error getting match details:', err);
+                        }
+                        
+                        res.json({
+                            tournament: tournament,
+                            matchDetails: matchDetails || null,
+                            onlineCount: tournament.current_participants // Simplified for now
+                        });
+                    });
+            });
+        });
+});
+
+// Get Tournament Chat Messages
+app.get('/api/tournament/:id/chat', requireAuth, (req, res) => {
+    const tournamentId = req.params.id;
+    
+    // Check if user is admin OR registered for this tournament
+    if (req.session.isAdmin) {
+        // Admin can access any tournament's chat
+        db.all(`SELECT cm.*, u.username, u.is_admin 
+                FROM tournament_chat_messages cm
+                JOIN users u ON cm.user_id = u.id
+                WHERE cm.tournament_id = ?
+                ORDER BY cm.created_at ASC
+                LIMIT 100`, [tournamentId], (err, messages) => {
+            if (err) {
+                return res.status(500).json({ error: 'Failed to get messages' });
+            }
+            res.json(messages);
+        });
+    } else {
+        // Regular user - check if registered for this tournament
+        db.get(`SELECT * FROM tournament_registrations 
+                WHERE user_id = ? AND tournament_id = ?`, 
+            [req.session.userId, tournamentId], (err, registration) => {
+                if (err) {
+                    return res.status(500).json({ error: 'Database error' });
+                }
+                
+                if (!registration) {
+                    return res.status(403).json({ error: 'Access denied' });
+                }
+                
+                // User is registered - get chat messages
+                db.all(`SELECT cm.*, u.username, u.is_admin 
+                        FROM tournament_chat_messages cm
+                        JOIN users u ON cm.user_id = u.id
+                        WHERE cm.tournament_id = ?
+                        ORDER BY cm.created_at ASC
+                        LIMIT 100`, [tournamentId], (err, messages) => {
+                    if (err) {
+                        return res.status(500).json({ error: 'Failed to get messages' });
+                    }
+                    res.json(messages);
+                });
+            });
+    }
+});
+
+// Send Chat Message
+app.post('/api/tournament/:id/chat', requireAuth, checkBanStatus, (req, res) => {
+    const tournamentId = req.params.id;
+    const { message } = req.body;
+    
+    if (!message || message.trim().length === 0) {
+        return res.status(400).json({ error: 'Message cannot be empty' });
+    }
+    
+    if (message.length > 200) {
+        return res.status(400).json({ error: 'Message too long (max 200 characters)' });
+    }
+    
+    // Check if user is registered for this tournament
+    db.get(`SELECT * FROM tournament_registrations 
+            WHERE user_id = ? AND tournament_id = ?`, 
+        [req.session.userId, tournamentId], (err, registration) => {
+            if (err) {
+                return res.status(500).json({ error: 'Database error' });
+            }
+            
+            if (!registration) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+            
+            // Insert chat message
+            db.run(`INSERT INTO tournament_chat_messages (tournament_id, user_id, message) 
+                    VALUES (?, ?, ?)`, 
+                [tournamentId, req.session.userId, message.trim()], function(err) {
+                    if (err) {
+                        return res.status(500).json({ error: 'Failed to send message' });
+                    }
+                    
+                    res.json({ success: true, message: 'Message sent successfully' });
+                });
+        });
+});
+
+// Get Tournament Players
+app.get('/api/tournament/:id/players', requireAuth, (req, res) => {
+    const tournamentId = req.params.id;
+    
+    // Check if user is registered for this tournament
+    db.get(`SELECT * FROM tournament_registrations 
+            WHERE user_id = ? AND tournament_id = ?`, 
+        [req.session.userId, tournamentId], (err, registration) => {
+            if (err) {
+                return res.status(500).json({ error: 'Database error' });
+            }
+            
+            if (!registration) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+            
+            // Get all players for this tournament
+            db.all(`SELECT u.id, u.username, u.wallet_balance, u.winnings_balance, 
+                           u.is_admin, tr.registration_date,
+                           CASE WHEN u.id = ? THEN 1 ELSE 0 END as is_online
+                    FROM tournament_registrations tr
+                    JOIN users u ON tr.user_id = u.id
+                    WHERE tr.tournament_id = ?
+                    ORDER BY tr.registration_date ASC`, 
+                [req.session.userId, tournamentId], (err, players) => {
+                    if (err) {
+                        return res.status(500).json({ error: 'Failed to get players' });
+                    }
+                    
+                    res.json(players);
+                });
+        });
+});
+
+// Get Tournament Announcements
+app.get('/api/tournament/:id/announcements', requireAuth, (req, res) => {
+    const tournamentId = req.params.id;
+    
+    // Check if user is admin OR registered for this tournament
+    if (req.session.isAdmin) {
+        // Admin can access any tournament's announcements
+        db.all(`SELECT * FROM tournament_announcements 
+                WHERE tournament_id = ?
+                ORDER BY created_at DESC
+                LIMIT 20`, [tournamentId], (err, announcements) => {
+            if (err) {
+                return res.status(500).json({ error: 'Failed to get announcements' });
+            }
+            res.json(announcements);
+        });
+    } else {
+        // Regular user - check if registered for this tournament
+        db.get(`SELECT * FROM tournament_registrations 
+                WHERE user_id = ? AND tournament_id = ?`, 
+            [req.session.userId, tournamentId], (err, registration) => {
+                if (err) {
+                    return res.status(500).json({ error: 'Database error' });
+                }
+                
+                if (!registration) {
+                    return res.status(403).json({ error: 'Access denied' });
+                }
+                
+                // User is registered - get announcements
+                db.all(`SELECT * FROM tournament_announcements 
+                        WHERE tournament_id = ?
+                        ORDER BY created_at DESC
+                        LIMIT 20`, [tournamentId], (err, announcements) => {
+                    if (err) {
+                        return res.status(500).json({ error: 'Failed to get announcements' });
+                    }
+                    res.json(announcements);
+                });
+            });
+    }
+});
+
+// Admin: Post Tournament Announcement
+app.post('/api/admin/tournament/:id/announce', requireAdmin, (req, res) => {
+    const tournamentId = req.params.id;
+    const { message } = req.body;
+    
+    if (!message || message.trim().length === 0) {
+        return res.status(400).json({ error: 'Announcement cannot be empty' });
+    }
+    
+    if (message.length > 500) {
+        return res.status(400).json({ error: 'Announcement too long (max 500 characters)' });
+    }
+    
+    db.run(`INSERT INTO tournament_announcements (tournament_id, admin_id, message) 
+            VALUES (?, ?, ?)`, 
+        [tournamentId, req.session.userId, message.trim()], function(err) {
+            if (err) {
+                return res.status(500).json({ error: 'Failed to post announcement' });
+            }
+            
+            res.json({ success: true, message: 'Announcement posted successfully' });
+        });
+});
+
+// Admin: Update Tournament Match Details
+app.post('/api/admin/tournament/:id/match-details', requireAdmin, (req, res) => {
+    const tournamentId = req.params.id;
+    const { room_id, room_password, match_start_time, game_server } = req.body;
+    
+    // Insert or update match details
+    db.run(`INSERT OR REPLACE INTO tournament_match_details 
+            (tournament_id, room_id, room_password, match_start_time, game_server, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`, 
+        [tournamentId, room_id, room_password, match_start_time, game_server, req.session.userId], 
+        function(err) {
+            if (err) {
+                return res.status(500).json({ error: 'Failed to update match details' });
+            }
+            
+            res.json({ success: true, message: 'Match details updated successfully' });
+        });
+});
+
+// Get Tournament Management Data
+app.get('/api/admin/tournament/:id/manage', requireAdmin, (req, res) => {
+    const tournamentId = req.params.id;
+    
+    // Get tournament details
+    db.get('SELECT * FROM tournaments WHERE id = ?', [tournamentId], (err, tournament) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to get tournament' });
+        }
+        
+        if (!tournament) {
+            return res.status(404).json({ error: 'Tournament not found' });
+        }
+        
+        // Get match details if exists
+        db.get('SELECT * FROM tournament_match_details WHERE tournament_id = ?', 
+            [tournamentId], (err, matchDetails) => {
+                // Don't fail if no match details exist
+                if (err) {
+                    console.error('Error getting match details:', err);
+                }
+                
+                res.json({
+                    tournament: tournament,
+                    matchDetails: matchDetails || null
+                });
+            });
+    });
+});
+
+// Update Tournament Status
+app.post('/api/admin/tournament/:id/status', requireAdmin, (req, res) => {
+    const tournamentId = req.params.id;
+    const { status } = req.body;
+    
+    if (!status || !['upcoming', 'active', 'completed'].includes(status)) {
+        return res.status(400).json({ error: 'Invalid status' });
+    }
+    
+    db.run('UPDATE tournaments SET status = ? WHERE id = ?', 
+        [status, tournamentId], function(err) {
+            if (err) {
+                return res.status(500).json({ error: 'Failed to update tournament status' });
+            }
+            
+            if (this.changes === 0) {
+                return res.status(404).json({ error: 'Tournament not found' });
+            }
+            
+            res.json({ success: true, message: 'Tournament status updated successfully' });
+        });
+});
+
+// Send Bulk Message to Tournament Participants
+app.post('/api/admin/tournament/:id/bulk-message', requireAdmin, (req, res) => {
+    const tournamentId = req.params.id;
+    const { message } = req.body;
+    
+    if (!message || message.trim().length === 0) {
+        return res.status(400).json({ error: 'Message cannot be empty' });
+    }
+    
+    if (message.length > 200) {
+        return res.status(400).json({ error: 'Message too long (max 200 characters)' });
+    }
+    
+    // Insert message as admin in tournament chat
+    db.run(`INSERT INTO tournament_chat_messages (tournament_id, user_id, message) 
+            VALUES (?, ?, ?)`, 
+        [tournamentId, req.session.userId, `[ADMIN BROADCAST] ${message.trim()}`], function(err) {
+            if (err) {
+                return res.status(500).json({ error: 'Failed to send bulk message' });
+            }
+            
+            res.json({ success: true, message: 'Bulk message sent successfully' });
+        });
+});
+
+// Export Tournament Participants
+app.get('/api/admin/tournament/:id/export-participants', requireAdmin, (req, res) => {
+    const tournamentId = req.params.id;
+    
+    db.all(`SELECT 
+                u.id, u.username, u.email, u.wallet_balance, u.winnings_balance,
+                tr.registration_date,
+                t.name as tournament_name
+            FROM tournament_registrations tr
+            JOIN users u ON tr.user_id = u.id
+            JOIN tournaments t ON tr.tournament_id = t.id
+            WHERE tr.tournament_id = ?
+            ORDER BY tr.registration_date ASC`, [tournamentId], (err, participants) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to export participants' });
+        }
+        
+        // Format data for export
+        const exportData = {
+            tournament_name: participants.length > 0 ? participants[0].tournament_name : 'Unknown',
+            export_date: new Date().toISOString(),
+            total_participants: participants.length,
+            participants: participants.map(p => ({
+                id: p.id,
+                username: p.username,
+                email: p.email,
+                wallet_balance: p.wallet_balance,
+                winnings_balance: p.winnings_balance,
+                registration_date: p.registration_date
+            }))
+        };
+        
+        res.json(exportData);
     });
 });
 
