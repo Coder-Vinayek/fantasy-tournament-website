@@ -1,13 +1,19 @@
 console.log("Server.js file is starting...");
+
 const express = require('express');
 const session = require('express-session');
 const bodyParser = require('body-parser');
 const path = require('path');
 const bcrypt = require('bcryptjs');
-const { db, initializeDatabase } = require('./database/init');
+
+// Load environment variables
+require('dotenv').config();
+
+// Import Supabase client
+const { supabase } = require('./database/supabase');
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 // Enhanced Middleware setup
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -16,11 +22,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Enhanced session configuration
 app.use(session({
-    secret: 'fantasy-tournament-secret-key',
+    secret: process.env.SESSION_SECRET || 'fantasy-tournament-secret-key',
     resave: false,
     saveUninitialized: false,
     rolling: true, // Reset expiration on each request
-    cookie: { 
+    cookie: {
         secure: false,
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
         httpOnly: true
@@ -39,55 +45,68 @@ function requireAuth(req, res, next) {
 // Enhanced requireAdmin middleware with proper JSON responses
 function requireAdmin(req, res, next) {
     if (!req.session) {
-        return res.status(403).json({ 
+        return res.status(403).json({
             error: 'No session found. Please login again.',
             code: 'NO_SESSION'
         });
     }
-    
+
     if (!req.session.userId) {
-        return res.status(403).json({ 
+        return res.status(403).json({
             error: 'Not logged in. Please login again.',
             code: 'NOT_LOGGED_IN'
         });
     }
-    
+
     if (!req.session.isAdmin) {
-        return res.status(403).json({ 
+        return res.status(403).json({
             error: 'Admin access required. Please login as admin.',
             code: 'NOT_ADMIN'
         });
     }
-    
+
     next();
 }
 
 // Ban status check middleware
-function checkBanStatus(req, res, next) {
+async function checkBanStatus(req, res, next) {
     if (!req.session.userId) {
         return next();
     }
-    
-    db.get('SELECT ban_status, ban_expiry FROM users WHERE id = ?', [req.session.userId], (err, user) => {
-        if (err) {
+
+    try {
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('ban_status, ban_expiry')
+            .eq('id', req.session.userId)
+            .single();
+
+        if (error) {
+            console.error('Error checking user ban status:', error);
             return res.status(500).json({ error: 'Database error' });
         }
-        
+
         if (!user) {
             return res.status(400).json({ error: 'User not found' });
         }
-        
+
         // Check if temporarily banned and expired
         if (user.ban_status === 'temp_banned' && user.ban_expiry && new Date(user.ban_expiry) <= new Date()) {
-            db.run(`UPDATE users 
-                    SET ban_status = 'active', ban_expiry = NULL, ban_reason = NULL, 
-                        banned_at = NULL, banned_by = NULL 
-                    WHERE id = ?`, [req.session.userId], (err) => {
-                if (err) console.error('Error updating expired ban:', err);
-                next(); // Continue - ban has expired
-            });
+            // Update user to remove expired ban
+            await supabase
+                .from('users')
+                .update({
+                    ban_status: 'active',
+                    ban_expiry: null,
+                    ban_reason: null,
+                    banned_at: null,
+                    banned_by: null
+                })
+                .eq('id', req.session.userId);
+            
+            next(); // Continue - ban has expired
         } else if (user.ban_status === 'temp_banned' || user.ban_status === 'banned') {
-            return res.status(403).json({ 
+            return res.status(403).json({
                 error: 'Your account is banned. You can view the website but cannot perform this action.',
                 banned: true,
                 ban_status: user.ban_status
@@ -95,7 +114,10 @@ function checkBanStatus(req, res, next) {
         } else {
             next(); // Not banned, continue
         }
-    });
+    } catch (error) {
+        console.error('Error in ban status check:', error);
+        return res.status(500).json({ error: 'Database error' });
+    }
 }
 
 // Routes - Serve HTML pages
@@ -131,57 +153,76 @@ app.get('/tournament/:id', requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'views', 'tournament-lobby.html'));
 });
 
-
 // API Routes - Authentication
-app.post('/api/register', (req, res) => {
+app.post('/api/register', async (req, res) => {
     const { username, email, password } = req.body;
-    
+
     if (!username || !email || !password) {
         return res.status(400).json({ error: 'All fields are required' });
     }
 
-    const hashedPassword = bcrypt.hashSync(password, 10);
-    
-    db.run('INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
-        [username, email, hashedPassword],
-        function(err) {
-            if (err) {
-                if (err.message.includes('UNIQUE constraint failed')) {
-                    return res.status(400).json({ error: 'Username or email already exists' });
-                }
-                return res.status(500).json({ error: 'Registration failed' });
+    try {
+        const hashedPassword = bcrypt.hashSync(password, 10);
+        
+        const { data, error } = await supabase
+            .from('users')
+            .insert([{
+                username,
+                email,
+                password: hashedPassword,
+                wallet_balance: 0,
+                winnings_balance: 0,
+                is_admin: false
+            }])
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Registration error:', error);
+            if (error.code === '23505') { // Unique constraint violation
+                return res.status(400).json({ error: 'Username or email already exists' });
             }
-            
-            req.session.userId = this.lastID;
-            req.session.username = username;
-            req.session.isAdmin = false;
-            res.json({ success: true, message: 'Registration successful' });
+            return res.status(500).json({ error: 'Registration failed' });
         }
-    );
+
+        req.session.userId = data.id;
+        req.session.username = username;
+        req.session.isAdmin = false;
+
+        res.json({ success: true, message: 'Registration successful' });
+    } catch (error) {
+        console.error('Registration error:', error);
+        return res.status(500).json({ error: 'Registration failed' });
+    }
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
-    
-    db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
-        if (err) {
-            return res.status(500).json({ error: 'Login failed' });
-        }
-        
-        if (!user || !bcrypt.compareSync(password, user.password)) {
+
+    try {
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('username', username)
+            .single();
+
+        if (error || !user || !bcrypt.compareSync(password, user.password)) {
             return res.status(400).json({ error: 'Invalid username or password' });
         }
-        
+
         req.session.userId = user.id;
         req.session.username = user.username;
-        req.session.isAdmin = user.is_admin === 1;
-        
-        res.json({ 
-            success: true, 
+        req.session.isAdmin = user.is_admin;
+
+        res.json({
+            success: true,
             message: 'Login successful',
-            isAdmin: user.is_admin === 1
+            isAdmin: user.is_admin
         });
-    });
+    } catch (error) {
+        console.error('Login error:', error);
+        return res.status(500).json({ error: 'Login failed' });
+    }
 });
 
 app.post('/api/logout', (req, res) => {
@@ -194,377 +235,730 @@ app.post('/api/logout', (req, res) => {
 });
 
 // Admin session check route
-app.get('/api/admin/session-check', (req, res) => {
+app.get('/api/admin/session-check', async (req, res) => {
     if (!req.session || !req.session.userId || !req.session.isAdmin) {
-        return res.status(403).json({ 
+        return res.status(403).json({
             authenticated: false,
             isAdmin: false,
             error: 'Session expired or invalid',
             redirectTo: '/login'
         });
     }
-    
-    // Refresh admin info from database
-    db.get('SELECT id, username, is_admin FROM users WHERE id = ? AND is_admin = 1', 
-        [req.session.userId], (err, user) => {
-            if (err || !user) {
-                req.session.destroy();
-                return res.status(403).json({ 
-                    authenticated: false,
-                    isAdmin: false,
-                    error: 'Admin user not found',
-                    redirectTo: '/login'
-                });
-            }
-            
-            // Refresh session data
-            req.session.userId = user.id;
-            req.session.username = user.username;
-            req.session.isAdmin = user.is_admin === 1;
-            
-            res.json({ 
-                authenticated: true,
-                isAdmin: true,
-                userId: user.id,
-                username: user.username
+
+    try {
+        // Refresh admin info from database
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('id, username, is_admin')
+            .eq('id', req.session.userId)
+            .eq('is_admin', true)
+            .single();
+
+        if (error || !user) {
+            req.session.destroy();
+            return res.status(403).json({
+                authenticated: false,
+                isAdmin: false,
+                error: 'Admin user not found',
+                redirectTo: '/login'
             });
+        }
+
+        // Refresh session data
+        req.session.userId = user.id;
+        req.session.username = user.username;
+        req.session.isAdmin = user.is_admin;
+
+        res.json({
+            authenticated: true,
+            isAdmin: true,
+            userId: user.id,
+            username: user.username
         });
+    } catch (error) {
+        console.error('Session check error:', error);
+        return res.status(500).json({
+            authenticated: false,
+            isAdmin: false,
+            error: 'Database error',
+            redirectTo: '/login'
+        });
+    }
 });
 
 // API Routes - User Info
-app.get('/api/user', requireAuth, (req, res) => {
-    db.get(`SELECT id, username, email, wallet_balance, winnings_balance,
-                   ban_status, ban_expiry, ban_reason, banned_at
-            FROM users WHERE id = ?`, [req.session.userId], (err, user) => {
-        if (err) {
+app.get('/api/user', requireAuth, async (req, res) => {
+    try {
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('id, username, email, wallet_balance, winnings_balance, ban_status, ban_expiry, ban_reason, banned_at')
+            .eq('id', req.session.userId)
+            .single();
+
+        if (error) {
+            console.error('Get user error:', error);
             return res.status(500).json({ error: 'Failed to get user info' });
         }
+
         res.json(user);
-    });
+    } catch (error) {
+        console.error('Get user error:', error);
+        return res.status(500).json({ error: 'Failed to get user info' });
+    }
 });
 
 // API Routes - Tournaments
-app.get('/api/tournaments', requireAuth, (req, res) => {
-    db.all(`SELECT t.*, 
-            CASE WHEN tr.user_id IS NOT NULL THEN 1 ELSE 0 END as is_registered
-            FROM tournaments t 
-            LEFT JOIN tournament_registrations tr ON t.id = tr.tournament_id AND tr.user_id = ?
-            ORDER BY t.start_date ASC`, [req.session.userId], (err, tournaments) => {
-        if (err) {
+app.get('/api/tournaments', requireAuth, async (req, res) => {
+    try {
+        const { data: tournaments, error } = await supabase
+            .from('tournaments')
+            .select(`
+                *,
+                tournament_registrations!left(user_id)
+            `)
+            .order('start_date', { ascending: true });
+
+        if (error) {
+            console.error('Get tournaments error:', error);
             return res.status(500).json({ error: 'Failed to get tournaments' });
         }
-        res.json(tournaments);
-    });
+
+        // Transform data to match expected format
+        const tournamentsWithRegistration = tournaments.map(tournament => ({
+            ...tournament,
+            is_registered: tournament.tournament_registrations.some(reg => reg.user_id === req.session.userId) ? 1 : 0
+        }));
+
+        res.json(tournamentsWithRegistration);
+    } catch (error) {
+        console.error('Get tournaments error:', error);
+        return res.status(500).json({ error: 'Failed to get tournaments' });
+    }
 });
 
-app.post('/api/tournaments/register', requireAuth, checkBanStatus, (req, res) => {
+app.post('/api/tournaments/register', requireAuth, checkBanStatus, async (req, res) => {
     const { tournamentId } = req.body;
-    
-    // Get tournament and user info
-    db.get('SELECT * FROM tournaments WHERE id = ?', [tournamentId], (err, tournament) => {
-        if (err || !tournament) {
+
+    try {
+        // Start a transaction-like operation
+        const { data: tournament, error: tournamentError } = await supabase
+            .from('tournaments')
+            .select('*')
+            .eq('id', tournamentId)
+            .single();
+
+        if (tournamentError || !tournament) {
             return res.status(400).json({ error: 'Tournament not found' });
         }
-        
-        db.get('SELECT * FROM users WHERE id = ?', [req.session.userId], (err, user) => {
-            if (err || !user) {
-                return res.status(400).json({ error: 'User not found' });
-            }
-            
-            // Check if user has enough balance
-            if (user.wallet_balance < tournament.entry_fee) {
-                return res.status(400).json({ error: 'Insufficient wallet balance' });
-            }
-            
-            // Check if tournament is full
-            if (tournament.current_participants >= tournament.max_participants) {
-                return res.status(400).json({ error: 'Tournament is full' });
-            }
-            
-            // Register user and deduct fee
-            db.serialize(() => {
-                db.run('BEGIN TRANSACTION');
-                
-                db.run('INSERT INTO tournament_registrations (user_id, tournament_id) VALUES (?, ?)',
-                    [req.session.userId, tournamentId], function(err) {
-                        if (err) {
-                            db.run('ROLLBACK');
-                            if (err.message.includes('UNIQUE constraint failed')) {
-                                return res.status(400).json({ error: 'Already registered for this tournament' });
-                            }
-                            return res.status(500).json({ error: 'Registration failed' });
-                        }
-                        
-                        // Deduct entry fee from wallet
-                        db.run('UPDATE users SET wallet_balance = wallet_balance - ? WHERE id = ?',
-                            [tournament.entry_fee, req.session.userId], (err) => {
-                                if (err) {
-                                    db.run('ROLLBACK');
-                                    return res.status(500).json({ error: 'Payment failed' });
-                                }
-                                
-                                // Update tournament participant count
-                                db.run('UPDATE tournaments SET current_participants = current_participants + 1 WHERE id = ?',
-                                    [tournamentId], (err) => {
-                                        if (err) {
-                                            db.run('ROLLBACK');
-                                            return res.status(500).json({ error: 'Registration failed' });
-                                        }
-                                        
-                                        // Record transaction
-                                        db.run('INSERT INTO wallet_transactions (user_id, transaction_type, amount, balance_type, description) VALUES (?, ?, ?, ?, ?)',
-                                            [req.session.userId, 'debit', tournament.entry_fee, 'wallet', `Tournament registration: ${tournament.name}`], (err) => {
-                                                if (err) {
-                                                    db.run('ROLLBACK');
-                                                    return res.status(500).json({ error: 'Transaction recording failed' });
-                                                }
-                                                
-                                                db.run('COMMIT');
-                                                res.json({ success: true, message: 'Registration successful' });
-                                            });
-                                    });
-                            });
-                    });
-            });
-        });
-    });
+
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', req.session.userId)
+            .single();
+
+        if (userError || !user) {
+            return res.status(400).json({ error: 'User not found' });
+        }
+
+        // Check if user has enough balance
+        if (user.wallet_balance < tournament.entry_fee) {
+            return res.status(400).json({ error: 'Insufficient wallet balance' });
+        }
+
+        // Check if tournament is full
+        if (tournament.current_participants >= tournament.max_participants) {
+            return res.status(400).json({ error: 'Tournament is full' });
+        }
+
+        // Check if already registered
+        const { data: existingReg, error: regCheckError } = await supabase
+            .from('tournament_registrations')
+            .select('id')
+            .eq('user_id', req.session.userId)
+            .eq('tournament_id', tournamentId)
+            .single();
+
+        if (existingReg) {
+            return res.status(400).json({ error: 'Already registered for this tournament' });
+        }
+
+        // Register user for tournament
+        const { error: registrationError } = await supabase
+            .from('tournament_registrations')
+            .insert([{
+                user_id: req.session.userId,
+                tournament_id: tournamentId
+            }]);
+
+        if (registrationError) {
+            console.error('Registration error:', registrationError);
+            return res.status(500).json({ error: 'Registration failed' });
+        }
+
+        // Deduct entry fee from wallet
+        const { error: balanceError } = await supabase
+            .from('users')
+            .update({
+                wallet_balance: user.wallet_balance - tournament.entry_fee
+            })
+            .eq('id', req.session.userId);
+
+        if (balanceError) {
+            console.error('Balance update error:', balanceError);
+            return res.status(500).json({ error: 'Payment failed' });
+        }
+
+        // Update tournament participant count
+        const { error: tournamentUpdateError } = await supabase
+            .from('tournaments')
+            .update({
+                current_participants: tournament.current_participants + 1
+            })
+            .eq('id', tournamentId);
+
+        if (tournamentUpdateError) {
+            console.error('Tournament update error:', tournamentUpdateError);
+            return res.status(500).json({ error: 'Registration failed' });
+        }
+
+        // Record transaction
+        const { error: transactionError } = await supabase
+            .from('wallet_transactions')
+            .insert([{
+                user_id: req.session.userId,
+                transaction_type: 'debit',
+                amount: tournament.entry_fee,
+                balance_type: 'wallet',
+                description: `Tournament registration: ${tournament.name}`
+            }]);
+
+        if (transactionError) {
+            console.error('Transaction error:', transactionError);
+            return res.status(500).json({ error: 'Transaction recording failed' });
+        }
+
+        res.json({ success: true, message: 'Registration successful' });
+    } catch (error) {
+        console.error('Tournament registration error:', error);
+        return res.status(500).json({ error: 'Registration failed' });
+    }
 });
 
 // API Routes - Wallet
-app.post('/api/wallet/deposit', requireAuth, (req, res) => {
+app.post('/api/wallet/deposit', requireAuth, async (req, res) => {
     const { amount } = req.body;
     const depositAmount = parseFloat(amount);
-    
+
     if (!depositAmount || depositAmount <= 0) {
         return res.status(400).json({ error: 'Invalid deposit amount' });
     }
-    
-    db.serialize(() => {
-        db.run('BEGIN TRANSACTION');
-        
-        db.run('UPDATE users SET wallet_balance = wallet_balance + ? WHERE id = ?',
-            [depositAmount, req.session.userId], (err) => {
-                if (err) {
-                    db.run('ROLLBACK');
-                    return res.status(500).json({ error: 'Deposit failed' });
-                }
-                
-                db.run('INSERT INTO wallet_transactions (user_id, transaction_type, amount, balance_type, description) VALUES (?, ?, ?, ?, ?)',
-                    [req.session.userId, 'credit', depositAmount, 'wallet', 'Wallet deposit'], (err) => {
-                        if (err) {
-                            db.run('ROLLBACK');
-                            return res.status(500).json({ error: 'Transaction recording failed' });
-                        }
-                        
-                        db.run('COMMIT');
-                        res.json({ success: true, message: 'Deposit successful' });
-                    });
-            });
-    });
+
+    try {
+        // Get current balance
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('wallet_balance')
+            .eq('id', req.session.userId)
+            .single();
+
+        if (userError || !user) {
+            return res.status(400).json({ error: 'User not found' });
+        }
+
+        // Update wallet balance
+        const { error: updateError } = await supabase
+            .from('users')
+            .update({
+                wallet_balance: user.wallet_balance + depositAmount
+            })
+            .eq('id', req.session.userId);
+
+        if (updateError) {
+            console.error('Deposit error:', updateError);
+            return res.status(500).json({ error: 'Deposit failed' });
+        }
+
+        // Record transaction
+        const { error: transactionError } = await supabase
+            .from('wallet_transactions')
+            .insert([{
+                user_id: req.session.userId,
+                transaction_type: 'credit',
+                amount: depositAmount,
+                balance_type: 'wallet',
+                description: 'Wallet deposit'
+            }]);
+
+        if (transactionError) {
+            console.error('Transaction error:', transactionError);
+            return res.status(500).json({ error: 'Transaction recording failed' });
+        }
+
+        res.json({ success: true, message: 'Deposit successful' });
+    } catch (error) {
+        console.error('Wallet deposit error:', error);
+        return res.status(500).json({ error: 'Deposit failed' });
+    }
 });
 
-app.post('/api/wallet/withdraw', requireAuth, checkBanStatus, (req, res) => {
+app.post('/api/wallet/withdraw', requireAuth, checkBanStatus, async (req, res) => {
     const { amount } = req.body;
     const withdrawAmount = parseFloat(amount);
-    
+
     if (!withdrawAmount || withdrawAmount <= 0) {
         return res.status(400).json({ error: 'Invalid withdrawal amount' });
     }
-    
-    db.get('SELECT winnings_balance FROM users WHERE id = ?', [req.session.userId], (err, user) => {
-        if (err || !user) {
+
+    try {
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('winnings_balance')
+            .eq('id', req.session.userId)
+            .single();
+
+        if (userError || !user) {
             return res.status(400).json({ error: 'User not found' });
         }
-        
+
         if (user.winnings_balance < withdrawAmount) {
             return res.status(400).json({ error: 'Insufficient winnings balance' });
         }
+
+        // Update winnings balance
+        const { error: updateError } = await supabase
+            .from('users')
+            .update({
+                winnings_balance: user.winnings_balance - withdrawAmount
+            })
+            .eq('id', req.session.userId);
+
+        if (updateError) {
+            console.error('Withdrawal error:', updateError);
+            return res.status(500).json({ error: 'Withdrawal failed' });
+        }
+
+        // Record transaction
+        const { error: transactionError } = await supabase
+            .from('wallet_transactions')
+            .insert([{
+                user_id: req.session.userId,
+                transaction_type: 'debit',
+                amount: withdrawAmount,
+                balance_type: 'winnings',
+                description: 'Winnings withdrawal'
+            }]);
+
+        if (transactionError) {
+            console.error('Transaction error:', transactionError);
+            return res.status(500).json({ error: 'Transaction recording failed' });
+        }
+
+        res.json({ success: true, message: 'Withdrawal successful' });
+    } catch (error) {
+        console.error('Wallet withdrawal error:', error);
+        return res.status(500).json({ error: 'Withdrawal failed' });
+    }
+});
+
+app.get('/api/wallet/transactions', requireAuth, async (req, res) => {
+    try {
+        const { data: transactions, error } = await supabase
+            .from('wallet_transactions')
+            .select('*')
+            .eq('user_id', req.session.userId)
+            .order('transaction_date', { ascending: false });
+
+        if (error) {
+            console.error('Get transactions error:', error);
+            return res.status(500).json({ error: 'Failed to get transactions' });
+        }
+
+        res.json(transactions);
+    } catch (error) {
+        console.error('Get transactions error:', error);
+        return res.status(500).json({ error: 'Failed to get transactions' });
+    }
+});
+
+// ====================================
+// ADMIN API ROUTES - COMPLETE SET
+// ====================================
+
+// Analytics API Route
+app.get('/api/admin/analytics', requireAdmin, async (req, res) => {
+    try {
+        const analytics = {};
+
+        // Get total users
+        const { count: totalUsers, error: usersError } = await supabase
+            .from('users')
+            .select('*', { count: 'exact', head: true })
+            .eq('is_admin', false);
+
+        if (usersError) throw usersError;
+        analytics.totalUsers = totalUsers || 0;
+
+        // Get total tournaments
+        const { count: totalTournaments, error: tournamentsError } = await supabase
+            .from('tournaments')
+            .select('*', { count: 'exact', head: true });
+
+        if (tournamentsError) throw tournamentsError;
+        analytics.totalTournaments = totalTournaments || 0;
+
+        // Get active tournaments
+        const { count: activeTournaments, error: activeError } = await supabase
+            .from('tournaments')
+            .select('*', { count: 'exact', head: true })
+            .eq('status', 'upcoming');
+
+        if (activeError) throw activeError;
+        analytics.activeTournaments = activeTournaments || 0;
+
+        // Get total revenue (wallet deposits)
+        const { data: revenueData, error: revenueError } = await supabase
+            .from('wallet_transactions')
+            .select('amount')
+            .eq('transaction_type', 'credit')
+            .eq('balance_type', 'wallet');
+
+        if (revenueError) throw revenueError;
+        analytics.totalRevenue = revenueData.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+        // Get total withdrawals
+        const { data: withdrawalData, error: withdrawalError } = await supabase
+            .from('wallet_transactions')
+            .select('amount')
+            .eq('transaction_type', 'debit')
+            .eq('balance_type', 'winnings');
+
+        if (withdrawalError) throw withdrawalError;
+        analytics.totalWithdrawals = withdrawalData.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+        // Get entry fees collected
+        const { data: entryFeeData, error: entryFeeError } = await supabase
+            .from('wallet_transactions')
+            .select('amount')
+            .ilike('description', '%Tournament registration:%');
+
+        if (entryFeeError) throw entryFeeError;
+        analytics.entryFeesCollected = entryFeeData.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+        // Calculate total profit
+        analytics.totalProfit = analytics.totalRevenue - analytics.totalWithdrawals;
+
+        // Recent users (last 30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         
-        db.serialize(() => {
-            db.run('BEGIN TRANSACTION');
-            
-            db.run('UPDATE users SET winnings_balance = winnings_balance - ? WHERE id = ?',
-                [withdrawAmount, req.session.userId], (err) => {
-                    if (err) {
-                        db.run('ROLLBACK');
-                        return res.status(500).json({ error: 'Withdrawal failed' });
-                    }
-                    
-                    db.run('INSERT INTO wallet_transactions (user_id, transaction_type, amount, balance_type, description) VALUES (?, ?, ?, ?, ?)',
-                        [req.session.userId, 'debit', withdrawAmount, 'winnings', 'Winnings withdrawal'], (err) => {
-                            if (err) {
-                                db.run('ROLLBACK');
-                                return res.status(500).json({ error: 'Transaction recording failed' });
-                            }
-                            
-                            db.run('COMMIT');
-                            res.json({ success: true, message: 'Withdrawal successful' });
-                        });
-                });
-        });
-    });
+        const { count: recentUsers, error: recentError } = await supabase
+            .from('users')
+            .select('*', { count: 'exact', head: true })
+            .eq('is_admin', false)
+            .gte('created_at', thirtyDaysAgo.toISOString());
+
+        if (recentError) throw recentError;
+        analytics.recentUsers = recentUsers || 0;
+
+        // Most popular tournament
+        const { data: popularTournament, error: popularError } = await supabase
+            .from('tournaments')
+            .select('name, current_participants, max_participants')
+            .order('current_participants', { ascending: false })
+            .limit(1)
+            .single();
+
+        if (popularError && popularError.code !== 'PGRST116') throw popularError;
+        analytics.popularTournament = popularTournament || { 
+            name: 'No tournaments', 
+            current_participants: 0, 
+            max_participants: 0 
+        };
+
+        // Tournament status distribution
+        const { data: tournaments, error: allTournError } = await supabase
+            .from('tournaments')
+            .select('status');
+        
+        if (!allTournError) {
+            const statusCounts = {};
+            tournaments.forEach(t => {
+                statusCounts[t.status] = (statusCounts[t.status] || 0) + 1;
+            });
+            analytics.tournamentStatus = Object.entries(statusCounts).map(([status, count]) => ({ status, count }));
+        } else {
+            analytics.tournamentStatus = [];
+        }
+
+        // Transaction trends (simplified)
+        analytics.transactionTrends = [];
+
+        res.json(analytics);
+    } catch (error) {
+        console.error('Analytics error:', error);
+        res.status(500).json({ error: 'Failed to load analytics' });
+    }
 });
 
-app.get('/api/wallet/transactions', requireAuth, (req, res) => {
-    db.all('SELECT * FROM wallet_transactions WHERE user_id = ? ORDER BY transaction_date DESC',
-        [req.session.userId], (err, transactions) => {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to get transactions' });
-            }
-            res.json(transactions);
-        });
-});
+// Admin Users Route
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+    try {
+        const { data: users, error } = await supabase
+            .from('users')
+            .select('id, username, email, wallet_balance, winnings_balance, created_at, ban_status, ban_expiry, ban_reason, banned_at, banned_by')
+            .eq('is_admin', false);
 
-// Admin API Routes
-app.get('/api/admin/users', requireAdmin, (req, res) => {
-    db.all(`SELECT id, username, email, wallet_balance, winnings_balance, created_at,
-                   ban_status, ban_expiry, ban_reason, banned_at, banned_by
-            FROM users WHERE is_admin = 0`, (err, users) => {
-        if (err) {
+        if (error) {
+            console.error('Get admin users error:', error);
             return res.status(500).json({ error: 'Failed to get users' });
         }
+
         res.json(users);
-    });
+    } catch (error) {
+        console.error('Get admin users error:', error);
+        return res.status(500).json({ error: 'Failed to get users' });
+    }
 });
 
-app.post('/api/admin/tournaments', requireAdmin, (req, res) => {
+// Admin Tournaments Routes
+app.post('/api/admin/tournaments', requireAdmin, async (req, res) => {
     const { name, description, entry_fee, prize_pool, max_participants, start_date, end_date } = req.body;
-    
-    db.run('INSERT INTO tournaments (name, description, entry_fee, prize_pool, max_participants, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [name, description, entry_fee, prize_pool, max_participants, start_date, end_date],
-        function(err) {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to create tournament' });
-            }
-            res.json({ success: true, message: 'Tournament created successfully' });
-        });
+
+    try {
+        const { data, error } = await supabase
+            .from('tournaments')
+            .insert([{
+                name,
+                description,
+                entry_fee,
+                prize_pool,
+                max_participants,
+                start_date,
+                end_date
+            }]);
+
+        if (error) {
+            console.error('Create tournament error:', error);
+            return res.status(500).json({ error: 'Failed to create tournament' });
+        }
+
+        res.json({ success: true, message: 'Tournament created successfully' });
+    } catch (error) {
+        console.error('Create tournament error:', error);
+        return res.status(500).json({ error: 'Failed to create tournament' });
+    }
 });
 
-app.get('/api/admin/tournaments', requireAdmin, (req, res) => {
-    db.all('SELECT * FROM tournaments ORDER BY created_at DESC', (err, tournaments) => {
-        if (err) {
+app.get('/api/admin/tournaments', requireAdmin, async (req, res) => {
+    try {
+        const { data: tournaments, error } = await supabase
+            .from('tournaments')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error('Get admin tournaments error:', error);
             return res.status(500).json({ error: 'Failed to get tournaments' });
         }
+
         res.json(tournaments);
-    });
-});
-
-app.post('/api/admin/update-winnings', requireAdmin, (req, res) => {
-    const { userId, amount } = req.body;
-    const winningsAmount = parseFloat(amount);
-    
-    if (!winningsAmount || winningsAmount <= 0) {
-        return res.status(400).json({ error: 'Invalid winnings amount' });
+    } catch (error) {
+        console.error('Get admin tournaments error:', error);
+        return res.status(500).json({ error: 'Failed to get tournaments' });
     }
-    
-    db.serialize(() => {
-        db.run('BEGIN TRANSACTION');
-        
-        db.run('UPDATE users SET winnings_balance = winnings_balance + ? WHERE id = ?',
-            [winningsAmount, userId], (err) => {
-                if (err) {
-                    db.run('ROLLBACK');
-                    return res.status(500).json({ error: 'Failed to update winnings' });
-                }
-                
-                db.run('INSERT INTO wallet_transactions (user_id, transaction_type, amount, balance_type, description) VALUES (?, ?, ?, ?, ?)',
-                    [userId, 'credit', winningsAmount, 'winnings', 'Prize winnings added by admin'], (err) => {
-                        if (err) {
-                            db.run('ROLLBACK');
-                            return res.status(500).json({ error: 'Transaction recording failed' });
-                        }
-                        
-                        db.run('COMMIT');
-                        res.json({ success: true, message: 'Winnings updated successfully' });
-                    });
-            });
-    });
 });
 
-// Delete Tournament API Route 
-app.delete('/api/admin/tournaments/:id', requireAdmin, (req, res) => {
+// Delete Tournament Route
+app.delete('/api/admin/tournaments/:id', requireAdmin, async (req, res) => {
     const tournamentId = parseInt(req.params.id);
-    
+
     if (!tournamentId || isNaN(tournamentId)) {
         return res.status(400).json({ error: 'Invalid tournament ID' });
     }
-    
-    // Start transaction to handle all deletions
-    db.serialize(() => {
-        db.run('BEGIN TRANSACTION');
-        
-        // First, get tournament details for confirmation message
-        db.get('SELECT * FROM tournaments WHERE id = ?', [tournamentId], (err, tournament) => {
-            if (err) {
-                db.run('ROLLBACK');
-                console.error('Error fetching tournament:', err);
-                return res.status(500).json({ error: 'Database error while fetching tournament' });
-            }
-            
-            if (!tournament) {
-                db.run('ROLLBACK');
-                return res.status(404).json({ error: 'Tournament not found' });
-            }
-            
-            // Delete tournament registrations first (foreign key constraint)
-            db.run('DELETE FROM tournament_registrations WHERE tournament_id = ?', [tournamentId], function(err) {
-                if (err) {
-                    db.run('ROLLBACK');
-                    console.error('Error deleting tournament registrations:', err);
-                    return res.status(500).json({ error: 'Failed to delete tournament registrations' });
-                }
-                
-                const registrationsDeleted = this.changes;
-                
-                // Delete the tournament itself
-                db.run('DELETE FROM tournaments WHERE id = ?', [tournamentId], function(err) {
-                    if (err) {
-                        db.run('ROLLBACK');
-                        console.error('Error deleting tournament:', err);
-                        return res.status(500).json({ error: 'Failed to delete tournament' });
-                    }
-                    
-                    if (this.changes === 0) {
-                        db.run('ROLLBACK');
-                        return res.status(404).json({ error: 'Tournament not found or already deleted' });
-                    }
-                    
-                    // Commit transaction
-                    db.run('COMMIT', (err) => {
-                        if (err) {
-                            console.error('Error committing tournament deletion:', err);
-                            return res.status(500).json({ error: 'Failed to commit deletion' });
-                        }
-                        
-                        // Success response
-                        res.json({ 
-                            success: true, 
-                            message: `Tournament "${tournament.name}" deleted successfully.`,
-                            details: {
-                                tournamentName: tournament.name,
-                                registrationsDeleted: registrationsDeleted
-                            }
-                        });
-                    });
-                });
-            });
+
+    try {
+        // Get tournament details first
+        const { data: tournament, error: getError } = await supabase
+            .from('tournaments')
+            .select('name')
+            .eq('id', tournamentId)
+            .single();
+
+        if (getError || !tournament) {
+            return res.status(404).json({ error: 'Tournament not found' });
+        }
+
+        // Delete tournament registrations first (due to foreign key constraints)
+        const { error: regError } = await supabase
+            .from('tournament_registrations')
+            .delete()
+            .eq('tournament_id', tournamentId);
+
+        if (regError) {
+            console.error('Error deleting registrations:', regError);
+            return res.status(500).json({ error: 'Failed to delete tournament registrations' });
+        }
+
+        // Delete the tournament
+        const { error: deleteError } = await supabase
+            .from('tournaments')
+            .delete()
+            .eq('id', tournamentId);
+
+        if (deleteError) {
+            console.error('Error deleting tournament:', deleteError);
+            return res.status(500).json({ error: 'Failed to delete tournament' });
+        }
+
+        res.json({
+            success: true,
+            message: `Tournament "${tournament.name}" deleted successfully.`
         });
-    });
+    } catch (error) {
+        console.error('Delete tournament error:', error);
+        return res.status(500).json({ error: 'Failed to delete tournament' });
+    }
 });
 
+// Tournament Participants Route
+app.get('/api/admin/tournament/:id/participants', requireAdmin, async (req, res) => {
+    const tournamentId = req.params.id;
 
-// Ban User API Route
-app.post('/api/admin/ban-user', requireAdmin, (req, res) => {
+    try {
+        const { data: participants, error } = await supabase
+            .from('tournament_registrations')
+            .select(`
+                id,
+                registration_date,
+                users!inner(id, username, email, wallet_balance, winnings_balance),
+                tournaments!inner(name)
+            `)
+            .eq('tournament_id', tournamentId)
+            .order('registration_date', { ascending: true });
+
+        if (error) {
+            console.error('Get participants error:', error);
+            return res.status(500).json({ error: 'Failed to get tournament participants' });
+        }
+
+        // Transform data to match expected format
+        const transformedParticipants = participants.map(p => ({
+            id: p.users.id,
+            username: p.users.username,
+            email: p.users.email,
+            wallet_balance: p.users.wallet_balance,
+            winnings_balance: p.users.winnings_balance,
+            registration_date: p.registration_date,
+            tournament_name: p.tournaments.name
+        }));
+
+        res.json(transformedParticipants);
+    } catch (error) {
+        console.error('Get participants error:', error);
+        return res.status(500).json({ error: 'Failed to get tournament participants' });
+    }
+});
+
+// Update Winnings Route
+app.post('/api/admin/update-winnings', requireAdmin, async (req, res) => {
+    const { userId, amount } = req.body;
+    const winningsAmount = parseFloat(amount);
+
+    if (!winningsAmount || winningsAmount <= 0) {
+        return res.status(400).json({ error: 'Invalid winnings amount' });
+    }
+
+    try {
+        // Get current winnings balance
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('winnings_balance')
+            .eq('id', userId)
+            .single();
+
+        if (userError || !user) {
+            return res.status(400).json({ error: 'User not found' });
+        }
+
+        // Update winnings balance
+        const { error: updateError } = await supabase
+            .from('users')
+            .update({
+                winnings_balance: user.winnings_balance + winningsAmount
+            })
+            .eq('id', userId);
+
+        if (updateError) {
+            console.error('Update winnings error:', updateError);
+            return res.status(500).json({ error: 'Failed to update winnings' });
+        }
+
+        // Record transaction
+        const { error: transactionError } = await supabase
+            .from('wallet_transactions')
+            .insert([{
+                user_id: userId,
+                transaction_type: 'credit',
+                amount: winningsAmount,
+                balance_type: 'winnings',
+                description: 'Prize winnings added by admin'
+            }]);
+
+        if (transactionError) {
+            console.error('Transaction error:', transactionError);
+            return res.status(500).json({ error: 'Transaction recording failed' });
+        }
+
+        res.json({ success: true, message: 'Winnings updated successfully' });
+    } catch (error) {
+        console.error('Update winnings error:', error);
+        return res.status(500).json({ error: 'Failed to update winnings' });
+    }
+});
+
+// Admin Transactions Route
+app.get('/api/admin/transactions', requireAdmin, async (req, res) => {
+    try {
+        const { data: transactions, error } = await supabase
+            .from('wallet_transactions')
+            .select(`
+                *,
+                users!inner(username)
+            `)
+            .or('description.ilike.%admin%,description.ilike.%Prize winnings%,description.ilike.%added by admin%')
+            .order('transaction_date', { ascending: false });
+
+        if (error) {
+            console.error('Get transactions error:', error);
+            return res.status(500).json({ error: 'Failed to get admin transactions' });
+        }
+
+        // Transform data to match expected format
+        const transformedTransactions = transactions.map(t => ({
+            ...t,
+            username: t.users.username
+        }));
+
+        res.json(transformedTransactions);
+    } catch (error) {
+        console.error('Get transactions error:', error);
+        return res.status(500).json({ error: 'Failed to get admin transactions' });
+    }
+});
+
+// Ban User Route
+app.post('/api/admin/ban-user', requireAdmin, async (req, res) => {
     const { userId, banType, banReason, banExpiry } = req.body;
-    
+
     if (!userId || !banType || !banReason) {
         return res.status(400).json({ error: 'User ID, ban type, and reason are required' });
     }
-    
+
     if (banType === 'temporary' && !banExpiry) {
         return res.status(400).json({ error: 'Expiry date is required for temporary bans' });
     }
-    
+
     // Map frontend values to database values
     let dbBanStatus;
     if (banType === 'temporary') {
@@ -574,592 +968,576 @@ app.post('/api/admin/ban-user', requireAdmin, (req, res) => {
     } else {
         return res.status(400).json({ error: 'Invalid ban type' });
     }
-    
-    const bannedAt = new Date().toISOString();
-    const bannedBy = req.session.userId;
-    
-    const query = `UPDATE users 
-                   SET ban_status = ?, ban_reason = ?, banned_at = ?, banned_by = ?, ban_expiry = ?
-                   WHERE id = ? AND is_admin = 0`;
-    
-    const params = [dbBanStatus, banReason, bannedAt, bannedBy, banExpiry || null, userId];
-    
-    db.run(query, params, function(err) {
-        if (err) {
-            console.error('Ban user error:', err);
-            return res.status(500).json({ 
-                error: 'Failed to ban user',
-                debug: {
-                    message: err.message,
-                    code: err.code
-                }
-            });
+
+    try {
+        const { data, error } = await supabase
+            .from('users')
+            .update({
+                ban_status: dbBanStatus,
+                ban_reason: banReason,
+                banned_at: new Date().toISOString(),
+                banned_by: req.session.userId,
+                ban_expiry: banExpiry || null
+            })
+            .eq('id', userId)
+            .eq('is_admin', false)
+            .select();
+
+        if (error) {
+            console.error('Ban user error:', error);
+            return res.status(500).json({ error: 'Failed to ban user' });
         }
-        
-        if (this.changes === 0) {
+
+        if (!data || data.length === 0) {
             return res.status(400).json({ error: 'User not found or is admin' });
         }
-        
-        res.json({ 
-            success: true, 
-            message: `User ${banType === 'permanent' ? 'permanently' : 'temporarily'} banned successfully` 
+
+        res.json({
+            success: true,
+            message: `User ${banType === 'permanent' ? 'permanently' : 'temporarily'} banned successfully`
         });
-    });
+    } catch (error) {
+        console.error('Ban user error:', error);
+        return res.status(500).json({ error: 'Failed to ban user' });
+    }
 });
 
-// Unban User API Route
-app.post('/api/admin/unban-user', requireAdmin, (req, res) => {
+// Unban User Route
+app.post('/api/admin/unban-user', requireAdmin, async (req, res) => {
     const { userId } = req.body;
-    
+
     if (!userId) {
         return res.status(400).json({ error: 'User ID is required' });
     }
-    
-    const query = `UPDATE users 
-                   SET ban_status = 'active', ban_expiry = NULL, ban_reason = NULL, 
-                       banned_at = NULL, banned_by = NULL
-                   WHERE id = ? AND is_admin = 0`;
-    
-    db.run(query, [userId], function(err) {
-        if (err) {
-            console.error('Unban user error:', err);
+
+    try {
+        const { data, error } = await supabase
+            .from('users')
+            .update({
+                ban_status: 'active',
+                ban_expiry: null,
+                ban_reason: null,
+                banned_at: null,
+                banned_by: null
+            })
+            .eq('id', userId)
+            .eq('is_admin', false)
+            .select();
+
+        if (error) {
+            console.error('Unban user error:', error);
             return res.status(500).json({ error: 'Failed to unban user' });
         }
-        
-        if (this.changes === 0) {
+
+        if (!data || data.length === 0) {
             return res.status(400).json({ error: 'User not found or is admin' });
         }
-        
+
         res.json({ success: true, message: 'User unbanned successfully' });
-    });
+    } catch (error) {
+        console.error('Unban user error:', error);
+        return res.status(500).json({ error: 'Failed to unban user' });
+    }
 });
 
-// Transactions API Routes 
-app.get('/api/admin/transactions', requireAdmin, (req, res) => {
-    db.all(`SELECT wt.*, u.username 
-            FROM wallet_transactions wt 
-            JOIN users u ON wt.user_id = u.id 
-            WHERE wt.description LIKE '%admin%' 
-            OR wt.description LIKE '%Prize winnings%'
-            OR wt.description LIKE '%added by admin%'
-            ORDER BY wt.transaction_date DESC`,
-        (err, transactions) => {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to get admin transactions' });
-            }
-            res.json(transactions);
-        });
-});
-
-// Analytics API Routes 
-app.get('/api/admin/analytics', requireAdmin, (req, res) => {
-    const analytics = {};
-    
-    // Get all analytics data in parallel
-    Promise.all([
-        // Total Users
-        new Promise((resolve, reject) => {
-            db.get('SELECT COUNT(*) as total_users FROM users WHERE is_admin = 0', (err, row) => {
-                if (err) reject(err);
-                else resolve(row.total_users);
-            });
-        }),
-        
-        // Total Tournaments
-        new Promise((resolve, reject) => {
-            db.get('SELECT COUNT(*) as total_tournaments FROM tournaments', (err, row) => {
-                if (err) reject(err);
-                else resolve(row.total_tournaments);
-            });
-        }),
-        
-        // Active Tournaments
-        new Promise((resolve, reject) => {
-            db.get("SELECT COUNT(*) as active_tournaments FROM tournaments WHERE status = 'upcoming'", (err, row) => {
-                if (err) reject(err);
-                else resolve(row.active_tournaments);
-            });
-        }),
-        
-        // Total Revenue (all deposits)
-        new Promise((resolve, reject) => {
-            db.get("SELECT COALESCE(SUM(amount), 0) as total_revenue FROM wallet_transactions WHERE transaction_type = 'credit' AND balance_type = 'wallet'", (err, row) => {
-                if (err) reject(err);
-                else resolve(row.total_revenue);
-            });
-        }),
-        
-        // Total Withdrawals
-        new Promise((resolve, reject) => {
-            db.get("SELECT COALESCE(SUM(amount), 0) as total_withdrawals FROM wallet_transactions WHERE transaction_type = 'debit' AND balance_type = 'winnings'", (err, row) => {
-                if (err) reject(err);
-                else resolve(row.total_withdrawals);
-            });
-        }),
-        
-        // Tournament Entry Fees Collected
-        new Promise((resolve, reject) => {
-            db.get("SELECT COALESCE(SUM(amount), 0) as entry_fees FROM wallet_transactions WHERE description LIKE 'Tournament registration:%'", (err, row) => {
-                if (err) reject(err);
-                else resolve(row.entry_fees);
-            });
-        }),
-        
-        // Recent User Registrations (last 30 days)
-        new Promise((resolve, reject) => {
-            db.get("SELECT COUNT(*) as recent_users FROM users WHERE created_at >= datetime('now', '-30 days') AND is_admin = 0", (err, row) => {
-                if (err) reject(err);
-                else resolve(row.recent_users);
-            });
-        }),
-        
-        // Most Popular Tournament
-        new Promise((resolve, reject) => {
-            db.get(`SELECT t.name, t.current_participants, t.max_participants 
-                    FROM tournaments t 
-                    ORDER BY t.current_participants DESC 
-                    LIMIT 1`, (err, row) => {
-                if (err) reject(err);
-                else resolve(row || { name: 'No tournaments', current_participants: 0, max_participants: 0 });
-            });
-        }),
-        
-        // Transaction Trends (last 7 days) - Admin actions only
-        new Promise((resolve, reject) => {
-            db.all(`SELECT 
-                        DATE(transaction_date) as date,
-                        transaction_type,
-                        COUNT(*) as count,
-                        SUM(amount) as total_amount
-                    FROM wallet_transactions 
-                    WHERE transaction_date >= datetime('now', '-7 days')
-                    AND (description LIKE '%admin%' OR description LIKE '%Prize winnings%')
-                    GROUP BY DATE(transaction_date), transaction_type
-                    ORDER BY date DESC`, (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        }),
-        
-        // Tournament Status Distribution
-        new Promise((resolve, reject) => {
-            db.all(`SELECT status, COUNT(*) as count FROM tournaments GROUP BY status`, (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        })
-        
-    ]).then(results => {
-        analytics.totalUsers = results[0];
-        analytics.totalTournaments = results[1];
-        analytics.activeTournaments = results[2];
-        analytics.totalRevenue = results[3];
-        analytics.totalWithdrawals = results[4];
-        analytics.entryFeesCollected = results[5];
-        analytics.recentUsers = results[6];
-        analytics.popularTournament = results[7];
-        analytics.transactionTrends = results[8];
-        analytics.tournamentStatus = results[9];
-        
-        analytics.totalProfit = analytics.totalRevenue - analytics.totalWithdrawals;
-        
-        res.json(analytics);
-    }).catch(err => {
-        console.error('Analytics error:', err);
-        res.status(500).json({ error: 'Failed to load analytics' });
-    });
-});
-
-// Get tournament participants for specific tournament
-app.get('/api/admin/tournament/:id/participants', requireAdmin, (req, res) => {
+// Tournament Management Routes
+app.get('/api/admin/tournament/:id/manage', requireAdmin, async (req, res) => {
     const tournamentId = req.params.id;
-    
-    db.all(`SELECT 
-                u.id, u.username, u.email, u.wallet_balance, u.winnings_balance,
-                tr.registration_date,
-                t.name as tournament_name
-            FROM tournament_registrations tr
-            JOIN users u ON tr.user_id = u.id
-            JOIN tournaments t ON tr.tournament_id = t.id
-            WHERE tr.tournament_id = ?
-            ORDER BY tr.registration_date ASC`, [tournamentId], (err, participants) => {
-        if (err) {
-            return res.status(500).json({ error: 'Failed to get tournament participants' });
+
+    try {
+        // Get tournament details
+        const { data: tournament, error: tournamentError } = await supabase
+            .from('tournaments')
+            .select('*')
+            .eq('id', tournamentId)
+            .single();
+
+        if (tournamentError || !tournament) {
+            return res.status(404).json({ error: 'Tournament not found' });
         }
-        res.json(participants);
-    });
-});
 
+        // Get match details if exists
+        const { data: matchDetails, error: matchError } = await supabase
+            .from('tournament_match_details')
+            .select('*')
+            .eq('tournament_id', tournamentId)
+            .single();
 
-// Get Tournament Lobby Data
-app.get('/api/tournament/:id/lobby', requireAuth, (req, res) => {
-    const tournamentId = req.params.id;
-    
-    // First check if user is registered for this tournament
-    db.get(`SELECT * FROM tournament_registrations 
-            WHERE user_id = ? AND tournament_id = ?`, 
-        [req.session.userId, tournamentId], (err, registration) => {
-            if (err) {
-                return res.status(500).json({ error: 'Database error' });
-            }
-            
-            if (!registration) {
-                return res.status(403).json({ error: 'You are not registered for this tournament' });
-            }
-            
-            // Get tournament details
-            db.get('SELECT * FROM tournaments WHERE id = ?', [tournamentId], (err, tournament) => {
-                if (err) {
-                    return res.status(500).json({ error: 'Failed to get tournament' });
-                }
-                
-                if (!tournament) {
-                    return res.status(404).json({ error: 'Tournament not found' });
-                }
-                
-                // Get match details if exists
-                db.get('SELECT * FROM tournament_match_details WHERE tournament_id = ?', 
-                    [tournamentId], (err, matchDetails) => {
-                        // Don't fail if no match details exist
-                        if (err) {
-                            console.error('Error getting match details:', err);
-                        }
-                        
-                        res.json({
-                            tournament: tournament,
-                            matchDetails: matchDetails || null,
-                            onlineCount: tournament.current_participants // Simplified for now
-                        });
-                    });
-            });
+        // Don't fail if no match details exist
+        res.json({
+            tournament: tournament,
+            matchDetails: matchDetails || null
         });
-});
-
-// Get Tournament Chat Messages
-app.get('/api/tournament/:id/chat', requireAuth, (req, res) => {
-    const tournamentId = req.params.id;
-    
-    // Check if user is admin OR registered for this tournament
-    if (req.session.isAdmin) {
-        // Admin can access any tournament's chat
-        db.all(`SELECT cm.*, u.username, u.is_admin 
-                FROM tournament_chat_messages cm
-                JOIN users u ON cm.user_id = u.id
-                WHERE cm.tournament_id = ?
-                ORDER BY cm.created_at ASC
-                LIMIT 100`, [tournamentId], (err, messages) => {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to get messages' });
-            }
-            res.json(messages);
-        });
-    } else {
-        // Regular user - check if registered for this tournament
-        db.get(`SELECT * FROM tournament_registrations 
-                WHERE user_id = ? AND tournament_id = ?`, 
-            [req.session.userId, tournamentId], (err, registration) => {
-                if (err) {
-                    return res.status(500).json({ error: 'Database error' });
-                }
-                
-                if (!registration) {
-                    return res.status(403).json({ error: 'Access denied' });
-                }
-                
-                // User is registered - get chat messages
-                db.all(`SELECT cm.*, u.username, u.is_admin 
-                        FROM tournament_chat_messages cm
-                        JOIN users u ON cm.user_id = u.id
-                        WHERE cm.tournament_id = ?
-                        ORDER BY cm.created_at ASC
-                        LIMIT 100`, [tournamentId], (err, messages) => {
-                    if (err) {
-                        return res.status(500).json({ error: 'Failed to get messages' });
-                    }
-                    res.json(messages);
-                });
-            });
+    } catch (error) {
+        console.error('Get tournament management error:', error);
+        return res.status(500).json({ error: 'Failed to get tournament' });
     }
 });
 
-// Send Chat Message
-app.post('/api/tournament/:id/chat', requireAuth, checkBanStatus, (req, res) => {
+// Update Match Details Route
+app.post('/api/admin/tournament/:id/match-details', requireAdmin, async (req, res) => {
+    const tournamentId = req.params.id;
+    const { room_id, room_password, match_start_time, game_server } = req.body;
+
+    try {
+        const { data, error } = await supabase
+            .from('tournament_match_details')
+            .upsert({
+                tournament_id: tournamentId,
+                room_id: room_id,
+                room_password: room_password,
+                match_start_time: match_start_time,
+                game_server: game_server,
+                updated_by: req.session.userId,
+                updated_at: new Date().toISOString()
+            }, {
+                onConflict: 'tournament_id'
+            });
+
+        if (error) {
+            console.error('Update match details error:', error);
+            return res.status(500).json({ error: 'Failed to update match details' });
+        }
+
+        res.json({ success: true, message: 'Match details updated successfully' });
+    } catch (error) {
+        console.error('Update match details error:', error);
+        return res.status(500).json({ error: 'Failed to update match details' });
+    }
+});
+
+// Post Tournament Announcement Route
+app.post('/api/admin/tournament/:id/announce', requireAdmin, async (req, res) => {
     const tournamentId = req.params.id;
     const { message } = req.body;
-    
-    if (!message || message.trim().length === 0) {
-        return res.status(400).json({ error: 'Message cannot be empty' });
-    }
-    
-    if (message.length > 200) {
-        return res.status(400).json({ error: 'Message too long (max 200 characters)' });
-    }
-    
-    // Check if user is registered for this tournament
-    db.get(`SELECT * FROM tournament_registrations 
-            WHERE user_id = ? AND tournament_id = ?`, 
-        [req.session.userId, tournamentId], (err, registration) => {
-            if (err) {
-                return res.status(500).json({ error: 'Database error' });
-            }
-            
-            if (!registration) {
-                return res.status(403).json({ error: 'Access denied' });
-            }
-            
-            // Insert chat message
-            db.run(`INSERT INTO tournament_chat_messages (tournament_id, user_id, message) 
-                    VALUES (?, ?, ?)`, 
-                [tournamentId, req.session.userId, message.trim()], function(err) {
-                    if (err) {
-                        return res.status(500).json({ error: 'Failed to send message' });
-                    }
-                    
-                    res.json({ success: true, message: 'Message sent successfully' });
-                });
-        });
-});
 
-// Get Tournament Players
-app.get('/api/tournament/:id/players', requireAuth, (req, res) => {
-    const tournamentId = req.params.id;
-    
-    // Check if user is registered for this tournament
-    db.get(`SELECT * FROM tournament_registrations 
-            WHERE user_id = ? AND tournament_id = ?`, 
-        [req.session.userId, tournamentId], (err, registration) => {
-            if (err) {
-                return res.status(500).json({ error: 'Database error' });
-            }
-            
-            if (!registration) {
-                return res.status(403).json({ error: 'Access denied' });
-            }
-            
-            // Get all players for this tournament
-            db.all(`SELECT u.id, u.username, u.wallet_balance, u.winnings_balance, 
-                           u.is_admin, tr.registration_date,
-                           CASE WHEN u.id = ? THEN 1 ELSE 0 END as is_online
-                    FROM tournament_registrations tr
-                    JOIN users u ON tr.user_id = u.id
-                    WHERE tr.tournament_id = ?
-                    ORDER BY tr.registration_date ASC`, 
-                [req.session.userId, tournamentId], (err, players) => {
-                    if (err) {
-                        return res.status(500).json({ error: 'Failed to get players' });
-                    }
-                    
-                    res.json(players);
-                });
-        });
-});
-
-// Get Tournament Announcements
-app.get('/api/tournament/:id/announcements', requireAuth, (req, res) => {
-    const tournamentId = req.params.id;
-    
-    // Check if user is admin OR registered for this tournament
-    if (req.session.isAdmin) {
-        // Admin can access any tournament's announcements
-        db.all(`SELECT * FROM tournament_announcements 
-                WHERE tournament_id = ?
-                ORDER BY created_at DESC
-                LIMIT 20`, [tournamentId], (err, announcements) => {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to get announcements' });
-            }
-            res.json(announcements);
-        });
-    } else {
-        // Regular user - check if registered for this tournament
-        db.get(`SELECT * FROM tournament_registrations 
-                WHERE user_id = ? AND tournament_id = ?`, 
-            [req.session.userId, tournamentId], (err, registration) => {
-                if (err) {
-                    return res.status(500).json({ error: 'Database error' });
-                }
-                
-                if (!registration) {
-                    return res.status(403).json({ error: 'Access denied' });
-                }
-                
-                // User is registered - get announcements
-                db.all(`SELECT * FROM tournament_announcements 
-                        WHERE tournament_id = ?
-                        ORDER BY created_at DESC
-                        LIMIT 20`, [tournamentId], (err, announcements) => {
-                    if (err) {
-                        return res.status(500).json({ error: 'Failed to get announcements' });
-                    }
-                    res.json(announcements);
-                });
-            });
-    }
-});
-
-// Admin: Post Tournament Announcement
-app.post('/api/admin/tournament/:id/announce', requireAdmin, (req, res) => {
-    const tournamentId = req.params.id;
-    const { message } = req.body;
-    
     if (!message || message.trim().length === 0) {
         return res.status(400).json({ error: 'Announcement cannot be empty' });
     }
-    
+
     if (message.length > 500) {
         return res.status(400).json({ error: 'Announcement too long (max 500 characters)' });
     }
-    
-    db.run(`INSERT INTO tournament_announcements (tournament_id, admin_id, message) 
-            VALUES (?, ?, ?)`, 
-        [tournamentId, req.session.userId, message.trim()], function(err) {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to post announcement' });
-            }
-            
-            res.json({ success: true, message: 'Announcement posted successfully' });
-        });
-});
 
-// Admin: Update Tournament Match Details
-app.post('/api/admin/tournament/:id/match-details', requireAdmin, (req, res) => {
-    const tournamentId = req.params.id;
-    const { room_id, room_password, match_start_time, game_server } = req.body;
-    
-    // Insert or update match details
-    db.run(`INSERT OR REPLACE INTO tournament_match_details 
-            (tournament_id, room_id, room_password, match_start_time, game_server, updated_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`, 
-        [tournamentId, room_id, room_password, match_start_time, game_server, req.session.userId], 
-        function(err) {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to update match details' });
-            }
-            
-            res.json({ success: true, message: 'Match details updated successfully' });
-        });
-});
+    try {
+        const { data, error } = await supabase
+            .from('tournament_announcements')
+            .insert([{
+                tournament_id: tournamentId,
+                admin_id: req.session.userId,
+                message: message.trim()
+            }]);
 
-// Get Tournament Management Data
-app.get('/api/admin/tournament/:id/manage', requireAdmin, (req, res) => {
-    const tournamentId = req.params.id;
-    
-    // Get tournament details
-    db.get('SELECT * FROM tournaments WHERE id = ?', [tournamentId], (err, tournament) => {
-        if (err) {
-            return res.status(500).json({ error: 'Failed to get tournament' });
+        if (error) {
+            console.error('Post announcement error:', error);
+            return res.status(500).json({ error: 'Failed to post announcement' });
         }
-        
-        if (!tournament) {
-            return res.status(404).json({ error: 'Tournament not found' });
-        }
-        
-        // Get match details if exists
-        db.get('SELECT * FROM tournament_match_details WHERE tournament_id = ?', 
-            [tournamentId], (err, matchDetails) => {
-                // Don't fail if no match details exist
-                if (err) {
-                    console.error('Error getting match details:', err);
-                }
-                
-                res.json({
-                    tournament: tournament,
-                    matchDetails: matchDetails || null
-                });
-            });
-    });
+
+        res.json({ success: true, message: 'Announcement posted successfully' });
+    } catch (error) {
+        console.error('Post announcement error:', error);
+        return res.status(500).json({ error: 'Failed to post announcement' });
+    }
 });
 
-// Update Tournament Status
-app.post('/api/admin/tournament/:id/status', requireAdmin, (req, res) => {
+// Update Tournament Status Route
+app.post('/api/admin/tournament/:id/status', requireAdmin, async (req, res) => {
     const tournamentId = req.params.id;
     const { status } = req.body;
-    
+
     if (!status || !['upcoming', 'active', 'completed'].includes(status)) {
         return res.status(400).json({ error: 'Invalid status' });
     }
-    
-    db.run('UPDATE tournaments SET status = ? WHERE id = ?', 
-        [status, tournamentId], function(err) {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to update tournament status' });
-            }
-            
-            if (this.changes === 0) {
-                return res.status(404).json({ error: 'Tournament not found' });
-            }
-            
-            res.json({ success: true, message: 'Tournament status updated successfully' });
-        });
+
+    try {
+        const { data, error } = await supabase
+            .from('tournaments')
+            .update({ status: status })
+            .eq('id', tournamentId)
+            .select();
+
+        if (error) {
+            console.error('Update tournament status error:', error);
+            return res.status(500).json({ error: 'Failed to update tournament status' });
+        }
+
+        if (!data || data.length === 0) {
+            return res.status(404).json({ error: 'Tournament not found' });
+        }
+
+        res.json({ success: true, message: 'Tournament status updated successfully' });
+    } catch (error) {
+        console.error('Update tournament status error:', error);
+        return res.status(500).json({ error: 'Failed to update tournament status' });
+    }
 });
 
-// Send Bulk Message to Tournament Participants
-app.post('/api/admin/tournament/:id/bulk-message', requireAdmin, (req, res) => {
+// Export Participants Route
+app.get('/api/admin/tournament/:id/export-participants', requireAdmin, async (req, res) => {
     const tournamentId = req.params.id;
-    const { message } = req.body;
-    
-    if (!message || message.trim().length === 0) {
-        return res.status(400).json({ error: 'Message cannot be empty' });
-    }
-    
-    if (message.length > 200) {
-        return res.status(400).json({ error: 'Message too long (max 200 characters)' });
-    }
-    
-    // Insert message as admin in tournament chat
-    db.run(`INSERT INTO tournament_chat_messages (tournament_id, user_id, message) 
-            VALUES (?, ?, ?)`, 
-        [tournamentId, req.session.userId, `[ADMIN BROADCAST] ${message.trim()}`], function(err) {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to send bulk message' });
-            }
-            
-            res.json({ success: true, message: 'Bulk message sent successfully' });
-        });
-});
 
-// Export Tournament Participants
-app.get('/api/admin/tournament/:id/export-participants', requireAdmin, (req, res) => {
-    const tournamentId = req.params.id;
-    
-    db.all(`SELECT 
-                u.id, u.username, u.email, u.wallet_balance, u.winnings_balance,
-                tr.registration_date,
-                t.name as tournament_name
-            FROM tournament_registrations tr
-            JOIN users u ON tr.user_id = u.id
-            JOIN tournaments t ON tr.tournament_id = t.id
-            WHERE tr.tournament_id = ?
-            ORDER BY tr.registration_date ASC`, [tournamentId], (err, participants) => {
-        if (err) {
+    try {
+        const { data: participants, error } = await supabase
+            .from('tournament_registrations')
+            .select(`
+                id,
+                registration_date,
+                users!inner(id, username, email, wallet_balance, winnings_balance),
+                tournaments!inner(name)
+            `)
+            .eq('tournament_id', tournamentId)
+            .order('registration_date', { ascending: true });
+
+        if (error) {
+            console.error('Export participants error:', error);
             return res.status(500).json({ error: 'Failed to export participants' });
         }
-        
+
         // Format data for export
         const exportData = {
-            tournament_name: participants.length > 0 ? participants[0].tournament_name : 'Unknown',
+            tournament_name: participants.length > 0 ? participants[0].tournaments.name : 'Unknown',
             export_date: new Date().toISOString(),
             total_participants: participants.length,
             participants: participants.map(p => ({
-                id: p.id,
-                username: p.username,
-                email: p.email,
-                wallet_balance: p.wallet_balance,
-                winnings_balance: p.winnings_balance,
+                id: p.users.id,
+                username: p.users.username,
+                email: p.users.email,
+                wallet_balance: p.users.wallet_balance,
+                winnings_balance: p.users.winnings_balance,
                 registration_date: p.registration_date
             }))
         };
-        
+
         res.json(exportData);
-    });
+    } catch (error) {
+        console.error('Export participants error:', error);
+        return res.status(500).json({ error: 'Failed to export participants' });
+    }
 });
 
-// Start server
-initializeDatabase().then(() => {
-    app.listen(PORT, () => {
-        console.log(`Fantasy Tournament Server running on http://localhost:${PORT}`);
-        console.log('Admin credentials: username=admin, password=admin123');
-    });
-}).catch(err => {
-    console.error('Failed to initialize database:', err);
+// Send Bulk Message Route
+app.post('/api/admin/tournament/:id/bulk-message', requireAdmin, async (req, res) => {
+    const tournamentId = req.params.id;
+    const { message } = req.body;
+
+    if (!message || message.trim().length === 0) {
+        return res.status(400).json({ error: 'Message cannot be empty' });
+    }
+
+    if (message.length > 200) {
+        return res.status(400).json({ error: 'Message too long (max 200 characters)' });
+    }
+
+    try {
+        // Insert message as admin in tournament chat
+        const { data, error } = await supabase
+            .from('tournament_chat_messages')
+            .insert([{
+                tournament_id: tournamentId,
+                user_id: req.session.userId,
+                message: `[ADMIN BROADCAST] ${message.trim()}`
+            }]);
+
+        if (error) {
+            console.error('Bulk message error:', error);
+            return res.status(500).json({ error: 'Failed to send bulk message' });
+        }
+
+        res.json({ success: true, message: 'Bulk message sent successfully' });
+    } catch (error) {
+        console.error('Bulk message error:', error);
+        return res.status(500).json({ error: 'Failed to send bulk message' });
+    }
 });
+
+// Tournament Announcements Route (for users/admins)
+app.get('/api/tournament/:id/announcements', requireAuth, async (req, res) => {
+    const tournamentId = req.params.id;
+
+    try {
+        // Check if user is admin OR registered for this tournament
+        if (!req.session.isAdmin) {
+            const { data: registration, error: regError } = await supabase
+                .from('tournament_registrations')
+                .select('id')
+                .eq('tournament_id', tournamentId)
+                .eq('user_id', req.session.userId)
+                .single();
+
+            if (regError || !registration) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+        }
+
+        const { data: announcements, error } = await supabase
+            .from('tournament_announcements')
+            .select('*')
+            .eq('tournament_id', tournamentId)
+            .order('created_at', { ascending: false })
+            .limit(20);
+
+        if (error) {
+            console.error('Get announcements error:', error);
+            return res.status(500).json({ error: 'Failed to get announcements' });
+        }
+
+        res.json(announcements);
+    } catch (error) {
+        console.error('Get announcements error:', error);
+        return res.status(500).json({ error: 'Failed to get announcements' });
+    }
+});
+
+// Tournament Chat Route (for users/admins)
+app.get('/api/tournament/:id/chat', requireAuth, async (req, res) => {
+    const tournamentId = req.params.id;
+
+    try {
+        // Check if user is admin OR registered for this tournament
+        if (!req.session.isAdmin) {
+            const { data: registration, error: regError } = await supabase
+                .from('tournament_registrations')
+                .select('id')
+                .eq('tournament_id', tournamentId)
+                .eq('user_id', req.session.userId)
+                .single();
+
+            if (regError || !registration) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+        }
+
+        const { data: messages, error } = await supabase
+            .from('tournament_chat_messages')
+            .select(`
+                *,
+                users!inner(username, is_admin)
+            `)
+            .eq('tournament_id', tournamentId)
+            .order('created_at', { ascending: true })
+            .limit(100);
+
+        if (error) {
+            console.error('Get chat messages error:', error);
+            return res.status(500).json({ error: 'Failed to get messages' });
+        }
+
+        // Transform data to match expected format
+        const transformedMessages = messages.map(m => ({
+            ...m,
+            username: m.users.username,
+            is_admin: m.users.is_admin
+        }));
+
+        res.json(transformedMessages);
+    } catch (error) {
+        console.error('Get chat messages error:', error);
+        return res.status(500).json({ error: 'Failed to get messages' });
+    }
+});
+
+// Send Chat Message Route
+app.post('/api/tournament/:id/chat', requireAuth, checkBanStatus, async (req, res) => {
+    const tournamentId = req.params.id;
+    const { message } = req.body;
+
+    if (!message || message.trim().length === 0) {
+        return res.status(400).json({ error: 'Message cannot be empty' });
+    }
+
+    if (message.length > 200) {
+        return res.status(400).json({ error: 'Message too long (max 200 characters)' });
+    }
+
+    try {
+        // Check if user is registered for this tournament
+        const { data: registration, error: regError } = await supabase
+            .from('tournament_registrations')
+            .select('id')
+            .eq('tournament_id', tournamentId)
+            .eq('user_id', req.session.userId)
+            .single();
+
+        if (regError || !registration) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        // Insert chat message
+        const { data, error } = await supabase
+            .from('tournament_chat_messages')
+            .insert([{
+                tournament_id: tournamentId,
+                user_id: req.session.userId,
+                message: message.trim()
+            }]);
+
+        if (error) {
+            console.error('Send message error:', error);
+            return res.status(500).json({ error: 'Failed to send message' });
+        }
+
+        res.json({ success: true, message: 'Message sent successfully' });
+    } catch (error) {
+        console.error('Send message error:', error);
+        return res.status(500).json({ error: 'Failed to send message' });
+    }
+});
+
+// Tournament Lobby Data Route
+app.get('/api/tournament/:id/lobby', requireAuth, async (req, res) => {
+    const tournamentId = req.params.id;
+
+    try {
+        // First check if user is registered for this tournament
+        const { data: registration, error: regError } = await supabase
+            .from('tournament_registrations')
+            .select('*')
+            .eq('user_id', req.session.userId)
+            .eq('tournament_id', tournamentId)
+            .single();
+
+        if (regError || !registration) {
+            return res.status(403).json({ error: 'You are not registered for this tournament' });
+        }
+
+        // Get tournament details
+        const { data: tournament, error: tournamentError } = await supabase
+            .from('tournaments')
+            .select('*')
+            .eq('id', tournamentId)
+            .single();
+
+        if (tournamentError || !tournament) {
+            return res.status(404).json({ error: 'Tournament not found' });
+        }
+
+        // Get match details if exists
+        const { data: matchDetails, error: matchError } = await supabase
+            .from('tournament_match_details')
+            .select('*')
+            .eq('tournament_id', tournamentId)
+            .single();
+
+        // Don't fail if no match details exist
+        res.json({
+            tournament: tournament,
+            matchDetails: matchDetails || null,
+            onlineCount: tournament.current_participants // Simplified for now
+        });
+    } catch (error) {
+        console.error('Get tournament lobby error:', error);
+        return res.status(500).json({ error: 'Failed to get tournament data' });
+    }
+});
+
+// Tournament Players Route
+app.get('/api/tournament/:id/players', requireAuth, async (req, res) => {
+    const tournamentId = req.params.id;
+
+    try {
+        // Check if user is registered for this tournament
+        const { data: registration, error: regError } = await supabase
+            .from('tournament_registrations')
+            .select('id')
+            .eq('user_id', req.session.userId)
+            .eq('tournament_id', tournamentId)
+            .single();
+
+        if (regError || !registration) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        // Get all players for this tournament
+        const { data: players, error } = await supabase
+            .from('tournament_registrations')
+            .select(`
+                registration_date,
+                users!inner(id, username, wallet_balance, winnings_balance, is_admin)
+            `)
+            .eq('tournament_id', tournamentId)
+            .order('registration_date', { ascending: true });
+
+        if (error) {
+            console.error('Get tournament players error:', error);
+            return res.status(500).json({ error: 'Failed to get players' });
+        }
+
+        // Transform data to match expected format
+        const transformedPlayers = players.map(p => ({
+            id: p.users.id,
+            username: p.users.username,
+            wallet_balance: p.users.wallet_balance,
+            winnings_balance: p.users.winnings_balance,
+            is_admin: p.users.is_admin,
+            registration_date: p.registration_date,
+            is_online: p.users.id === req.session.userId ? 1 : 0 // Simplified online status
+        }));
+
+        res.json(transformedPlayers);
+    } catch (error) {
+        console.error('Get tournament players error:', error);
+        return res.status(500).json({ error: 'Failed to get players' });
+    }
+});
+
+// Initialize and start server
+async function initializeServer() {
+    try {
+        // Test Supabase connection
+        console.log('🔄 Testing Supabase connection...');
+        const { data, error } = await supabase
+            .from('users')
+            .select('count', { count: 'exact' })
+            .limit(1);
+
+        if (error) {
+            throw new Error(`Supabase connection failed: ${error.message}`);
+        }
+
+        console.log('✅ Supabase connection established');
+        
+        // Check if admin user exists
+        const { data: adminUser, error: adminError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('is_admin', true)
+            .single();
+
+        if (adminError && adminError.code === 'PGRST116') {
+            // No admin user found, create one
+            console.log('🔧 Creating admin user...');
+            const hashedPassword = bcrypt.hashSync('admin123', 10);
+            
+            const { data: newAdmin, error: createError } = await supabase
+                .from('users')
+                .insert([{
+                    username: 'admin',
+                    email: 'admin@fantasy.com',
+                    password: hashedPassword,
+                    is_admin: true,
+                    wallet_balance: 0,
+                    winnings_balance: 0
+                }])
+                .select()
+                .single();
+
+            if (createError) {
+                console.error("❌ Error creating admin:", createError);
+            } else {
+                console.log("✅ Admin user created successfully");
+            }
+        }
+
+        app.listen(PORT, () => {
+            console.log(`🚀 Fantasy Tournament Server running on http://localhost:${PORT}`);
+            console.log('🗄️  Database: Supabase');
+            console.log('👨‍💼 Admin credentials: username=admin, password=admin123');
+            console.log('🔧 Change admin password after first login!');
+        });
+    } catch (error) {
+        console.error('❌ Failed to initialize server:', error);
+        process.exit(1);
+    }
+}
+
+initializeServer();
