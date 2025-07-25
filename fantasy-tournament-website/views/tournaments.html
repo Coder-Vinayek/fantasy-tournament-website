@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tournaments - Fantasy Tournament</title>
+    <!-- Your existing CSS -->
     <link rel="stylesheet" href="/css/style.css">
+    <!-- Enhanced Tournament CSS -->
+    <link rel="stylesheet" href="/css/tournament-enhanced.css">
 </head>
 <body>
     <div class="container">
@@ -17,28 +20,69 @@
                 <button id="logoutBtn" class="btn btn-small">Logout</button>
             </nav>
         </header>
-        
+
         <main class="main-content">
             <div class="page-header">
-                <h2>Tournaments</h2>
+                <h2>Gaming Tournaments</h2>
                 <div class="user-balance">
                     <span>Wallet: $<span id="walletBalance">0.00</span></span>
                     <span>Winnings: $<span id="winningsBalance">0.00</span></span>
                 </div>
             </div>
-            
-            <div id="tournamentsContainer" class="tournaments-grid">
-                <!-- Tournaments will be loaded here -->
+
+            <!-- FIXED: Tournament Filters -->
+            <div class="tournament-filters">
+                <div class="filter-group">
+                    <label for="gameFilter">Game:</label>
+                    <select id="gameFilter">
+                        <option value="all">All Games</option>
+                        <option value="Free Fire">Free Fire</option>
+                        <option value="BGMI">BGMI</option>
+                        <option value="Valorant">Valorant</option>
+                        <option value="CODM">CODM</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="modeFilter">Mode:</label>
+                    <select id="modeFilter">
+                        <option value="all">All Modes</option>
+                        <option value="solo">Solo</option>
+                        <option value="duo">Duo</option>
+                        <option value="squad">Squad</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <button id="clearFilters" class="btn btn-secondary">Clear Filters</button>
+                </div>
             </div>
-            
+
+            <!-- FIXED: Standardized container structure -->
+            <div id="tournaments-container" class="tournaments-container">
+                <div id="tournaments-grid" class="tournaments-grid">
+                    <!-- Tournament cards will be loaded here -->
+                </div>
+            </div>
+
+            <!-- Loading state -->
+            <div id="loading-state" class="loading-state" style="display: none;">
+                <div class="spinner"></div>
+                <p>Loading tournaments...</p>
+            </div>
+
+            <!-- Error state -->
+            <div id="error-state" class="error-state" style="display: none;">
+                <p>Failed to load tournaments. <button id="retry-btn" class="btn btn-primary">Retry</button></p>
+            </div>
+
+            <!-- Message container -->
             <div id="message" class="message"></div>
         </main>
-        
+
         <footer class="footer">
             <p>&copy; 2025 Fantasy Tournament. All rights reserved.</p>
         </footer>
     </div>
-    
+
     <script src="/js/tournaments.js"></script>
 </body>
 </html>
