@@ -8,6 +8,7 @@ let currentBanUsername = null;
 // Tournament Management Variables
 let currentManagedTournamentId = null;
 let chatRefreshInterval = null;
+let isCreatingTournament = false;
 
 document.addEventListener('DOMContentLoaded', function () {
     const usernameDisplay = document.getElementById('username-display');
@@ -41,7 +42,6 @@ document.addEventListener('DOMContentLoaded', function () {
     setInterval(checkAdminSession, 5 * 60 * 1000);
 
     // ADMIN SESSION MANAGEMENT
-
     async function checkAdminSession() {
         try {
             const response = await fetch('/api/admin/session-check');
@@ -86,7 +86,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // TAB MANAGEMENT
-
     tabBtns.forEach(btn => {
         btn.addEventListener('click', function () {
             const tabName = this.getAttribute('data-tab');
@@ -158,7 +157,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // ANALYTICS FUNCTIONS
-
     async function loadAnalytics() {
         try {
             const response = await adminFetch('/api/admin/analytics');
@@ -248,7 +246,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // TOURNAMENT FUNCTIONS
-
     async function loadTournaments() {
         try {
             const response = await adminFetch('/api/admin/tournaments');
@@ -445,7 +442,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // USER MANAGEMENT FUNCTIONS
-
     async function loadUsers() {
         try {
             const response = await adminFetch('/api/admin/users');
@@ -719,7 +715,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // TRANSACTION FUNCTIONS
-
     async function loadTransactions() {
         try {
             const response = await adminFetch('/api/admin/transactions');
@@ -855,18 +850,18 @@ document.addEventListener('DOMContentLoaded', function () {
         loadTournamentsForManagement();
         initializeTournamentManagementEvents();
     }
-    
+
     async function loadTournamentsForManagement() {
         try {
             const response = await adminFetch('/api/admin/tournaments');
             if (!response) return;
-            
+
             const tournaments = await response.json();
             const select = document.getElementById('manageTournamentSelect');
-            
+
             if (select) {
                 select.innerHTML = '<option value="">Select a tournament...</option>';
-                
+
                 tournaments.forEach(tournament => {
                     const option = document.createElement('option');
                     option.value = tournament.id;
@@ -879,150 +874,150 @@ document.addEventListener('DOMContentLoaded', function () {
             showMessage('Failed to load tournaments', 'error');
         }
     }
-    
+
     function initializeTournamentManagementEvents() {
         // Load Tournament Button
         const loadTournamentBtn = document.getElementById('loadTournamentBtn');
         if (loadTournamentBtn) {
             loadTournamentBtn.addEventListener('click', loadSelectedTournament);
         }
-    
+
         // Match Details Form
         const matchDetailsForm = document.getElementById('matchDetailsForm');
         if (matchDetailsForm) {
             matchDetailsForm.addEventListener('submit', updateMatchDetails);
         }
-    
+
         // Announcement Form
         const announcementForm = document.getElementById('announcementForm');
         if (announcementForm) {
             announcementForm.addEventListener('submit', postAnnouncement);
         }
-    
+
         // Character counter for announcements
         const announcementText = document.getElementById('announcementText');
         const announcementCharCount = document.getElementById('announcementCharCount');
         if (announcementText && announcementCharCount) {
-            announcementText.addEventListener('input', function() {
+            announcementText.addEventListener('input', function () {
                 announcementCharCount.textContent = this.value.length;
             });
         }
-    
+
         // Refresh buttons
         const refreshTournamentBtn = document.getElementById('refreshTournamentBtn');
         if (refreshTournamentBtn) {
             refreshTournamentBtn.addEventListener('click', refreshTournamentData);
         }
-    
+
         const refreshChatBtn = document.getElementById('refreshChatBtn');
         if (refreshChatBtn) {
             refreshChatBtn.addEventListener('click', loadLiveChatMessages);
         }
-    
+
         // Action buttons
         const viewTournamentLobbyBtn = document.getElementById('viewTournamentLobbyBtn');
         if (viewTournamentLobbyBtn) {
             viewTournamentLobbyBtn.addEventListener('click', viewTournamentLobby);
         }
-    
+
         // ===== NEW BUTTON EVENT LISTENERS =====
-        
+
         // Update Tournament Status Button
         const updateTournamentStatusBtn = document.getElementById('updateTournamentStatusBtn');
         if (updateTournamentStatusBtn) {
             updateTournamentStatusBtn.addEventListener('click', updateTournamentStatus);
         }
-    
+
         // Export Participants Button  
         const exportParticipantsBtn = document.getElementById('exportParticipantsBtn');
         if (exportParticipantsBtn) {
             exportParticipantsBtn.addEventListener('click', exportParticipants);
         }
-    
+
         // Send Bulk Message Button
         const sendBulkMessageBtn = document.getElementById('sendBulkMessageBtn');
         if (sendBulkMessageBtn) {
             sendBulkMessageBtn.addEventListener('click', sendBulkMessage);
         }
     }
-    
+
     async function loadSelectedTournament() {
         const select = document.getElementById('manageTournamentSelect');
         const tournamentId = select.value;
-        
+
         if (!tournamentId) {
             showMessage('Please select a tournament', 'error');
             return;
         }
-    
+
         currentManagedTournamentId = tournamentId;
-        
+
         // Show management panels
         const panels = document.getElementById('tournamentManagementPanels');
         if (panels) {
             panels.style.display = 'block';
         }
-    
+
         // Load tournament data
         await loadTournamentManagementData();
     }
-    
+
     async function loadTournamentManagementData() {
         if (!currentManagedTournamentId) return;
-    
+
         try {
             // Load tournament overview
             const response = await adminFetch(`/api/admin/tournament/${currentManagedTournamentId}/manage`);
             if (!response) return;
-            
+
             const data = await response.json();
-            
+
             // Update overview
             document.getElementById('manageTournamentName').textContent = data.tournament.name;
             document.getElementById('manageTournamentStatus').textContent = data.tournament.status;
-            document.getElementById('manageTournamentParticipants').textContent = 
+            document.getElementById('manageTournamentParticipants').textContent =
                 `${data.tournament.current_participants}/${data.tournament.max_participants}`;
             document.getElementById('manageTournamentPrize').textContent = `$${data.tournament.prize_pool}`;
-    
+
             // Load match details if they exist
             if (data.matchDetails) {
                 const match = data.matchDetails;
                 document.getElementById('roomIdInput').value = match.room_id || '';
                 document.getElementById('roomPasswordInput').value = match.room_password || '';
                 document.getElementById('gameServerInput').value = match.game_server || '';
-                
+
                 if (match.match_start_time) {
                     const date = new Date(match.match_start_time);
                     document.getElementById('matchStartTimeInput').value = date.toISOString().slice(0, 16);
                 }
             }
-    
+
             // Load recent announcements
             await loadRecentAnnouncements();
-            
+
             // Load live chat
             await loadLiveChatMessages();
-            
+
             // Start auto-refresh for chat
             if (chatRefreshInterval) {
                 clearInterval(chatRefreshInterval);
             }
             chatRefreshInterval = setInterval(loadLiveChatMessages, 5000);
-    
+
         } catch (error) {
             console.error('Error loading tournament management data:', error);
             showMessage('Failed to load tournament data', 'error');
         }
     }
-    
+
     async function updateMatchDetails(e) {
         e.preventDefault();
-        
+
         if (!currentManagedTournamentId) {
             showMessage('No tournament selected', 'error');
             return;
         }
-    
+
         const formData = new FormData(e.target);
         const matchDetails = {
             room_id: formData.get('room_id'),
@@ -1030,7 +1025,7 @@ document.addEventListener('DOMContentLoaded', function () {
             match_start_time: formData.get('match_start_time'),
             game_server: formData.get('game_server')
         };
-    
+
         try {
             const response = await adminFetch(`/api/admin/tournament/${currentManagedTournamentId}/match-details`, {
                 method: 'POST',
@@ -1039,11 +1034,11 @@ document.addEventListener('DOMContentLoaded', function () {
                 },
                 body: JSON.stringify(matchDetails)
             });
-    
+
             if (!response) return;
-    
+
             const result = await response.json();
-    
+
             if (result.success) {
                 showMessage('Match details updated successfully', 'success');
             } else {
@@ -1054,23 +1049,23 @@ document.addEventListener('DOMContentLoaded', function () {
             showMessage('Network error. Please try again.', 'error');
         }
     }
-    
+
     async function postAnnouncement(e) {
         e.preventDefault();
-        
+
         if (!currentManagedTournamentId) {
             showMessage('No tournament selected', 'error');
             return;
         }
-    
+
         const formData = new FormData(e.target);
         const message = formData.get('message').trim();
-    
+
         if (!message) {
             showMessage('Announcement cannot be empty', 'error');
             return;
         }
-    
+
         try {
             const response = await adminFetch(`/api/admin/tournament/${currentManagedTournamentId}/announce`, {
                 method: 'POST',
@@ -1079,11 +1074,11 @@ document.addEventListener('DOMContentLoaded', function () {
                 },
                 body: JSON.stringify({ message })
             });
-    
+
             if (!response) return;
-    
+
             const result = await response.json();
-    
+
             if (result.success) {
                 showMessage('Announcement posted successfully', 'success');
                 document.getElementById('announcementText').value = '';
@@ -1097,25 +1092,25 @@ document.addEventListener('DOMContentLoaded', function () {
             showMessage('Network error. Please try again.', 'error');
         }
     }
-    
+
     async function loadRecentAnnouncements() {
         if (!currentManagedTournamentId) return;
-    
+
         try {
             const response = await adminFetch(`/api/tournament/${currentManagedTournamentId}/announcements`);
             if (!response) return;
-            
+
             const announcements = await response.json();
             const container = document.getElementById('recentAnnouncementsList');
-            
+
             if (container) {
                 container.innerHTML = '';
-                
+
                 if (announcements.length === 0) {
                     container.innerHTML = '<p class="no-announcements">No announcements yet</p>';
                     return;
                 }
-    
+
                 announcements.slice(0, 5).forEach(announcement => {
                     const announcementElement = createAnnouncementManagementElement(announcement);
                     container.appendChild(announcementElement);
@@ -1125,46 +1120,46 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error loading recent announcements:', error);
         }
     }
-    
+
     function createAnnouncementManagementElement(announcement) {
         const announcementDiv = document.createElement('div');
         announcementDiv.className = 'announcement-management-item';
-        
+
         const timestamp = new Date(announcement.created_at).toLocaleString();
-        
+
         announcementDiv.innerHTML = `
             <div class="announcement-management-header">
                 <span class="announcement-management-time">${timestamp}</span>
             </div>
             <div class="announcement-management-content">${escapeHtml(announcement.message)}</div>
         `;
-        
+
         return announcementDiv;
     }
-    
+
     async function loadLiveChatMessages() {
         if (!currentManagedTournamentId) return;
-    
+
         try {
             const response = await adminFetch(`/api/tournament/${currentManagedTournamentId}/chat`);
             if (!response) return;
-            
+
             const messages = await response.json();
             const container = document.getElementById('liveChatMessages');
-            
+
             if (container) {
                 container.innerHTML = '';
-                
+
                 if (messages.length === 0) {
                     container.innerHTML = '<p class="no-chat-messages">No chat messages yet</p>';
                     return;
                 }
-    
+
                 messages.slice(-10).forEach(message => {
                     const messageElement = createChatManagementElement(message);
                     container.appendChild(messageElement);
                 });
-                
+
                 // Scroll to bottom
                 container.scrollTop = container.scrollHeight;
             }
@@ -1172,13 +1167,13 @@ document.addEventListener('DOMContentLoaded', function () {
             console.error('Error loading live chat messages:', error);
         }
     }
-    
+
     function createChatManagementElement(message) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `chat-management-message ${message.is_admin ? 'admin-message' : 'user-message'}`;
-        
-        const timestamp = new Date(message.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-        
+
+        const timestamp = new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
         messageDiv.innerHTML = `
             <div class="chat-management-header">
                 <span class="chat-management-username ${message.is_admin ? 'admin-username' : ''}">${message.username}${message.is_admin ? ' 👑' : ''}</span>
@@ -1186,53 +1181,53 @@ document.addEventListener('DOMContentLoaded', function () {
             </div>
             <div class="chat-management-content">${escapeHtml(message.message)}</div>
         `;
-        
+
         return messageDiv;
     }
-    
+
     async function refreshTournamentData() {
         if (currentManagedTournamentId) {
             await loadTournamentManagementData();
             showMessage('Tournament data refreshed', 'success');
         }
     }
-    
+
     function viewTournamentLobby() {
         if (currentManagedTournamentId) {
             window.open(`/tournament/${currentManagedTournamentId}`, '_blank');
         }
     }
-    
+
     // ===== NEW BUTTON FUNCTIONS =====
-    
+
     // UPDATE TOURNAMENT STATUS FUNCTION
     async function updateTournamentStatus() {
         if (!currentManagedTournamentId) {
             showMessage('No tournament selected', 'error');
             return;
         }
-    
+
         // Get current status
         const currentStatus = document.getElementById('manageTournamentStatus').textContent;
-        
+
         // Show status selection
         const newStatus = prompt(`Current status: ${currentStatus}\n\nSelect new status:\n- upcoming\n- active\n- completed\n\nEnter new status:`);
-        
+
         if (!newStatus) {
             return; // User cancelled
         }
-    
+
         const validStatuses = ['upcoming', 'active', 'completed'];
         if (!validStatuses.includes(newStatus.toLowerCase())) {
             showMessage('Invalid status. Use: upcoming, active, or completed', 'error');
             return;
         }
-    
+
         if (newStatus.toLowerCase() === currentStatus.toLowerCase()) {
             showMessage('Status is already set to ' + newStatus, 'info');
             return;
         }
-    
+
         try {
             const response = await adminFetch(`/api/admin/tournament/${currentManagedTournamentId}/status`, {
                 method: 'POST',
@@ -1241,11 +1236,11 @@ document.addEventListener('DOMContentLoaded', function () {
                 },
                 body: JSON.stringify({ status: newStatus.toLowerCase() })
             });
-    
+
             if (!response) return;
-    
+
             const result = await response.json();
-    
+
             if (result.success) {
                 showMessage(`Tournament status updated to: ${newStatus}`, 'success');
                 // Refresh tournament data
@@ -1262,78 +1257,78 @@ document.addEventListener('DOMContentLoaded', function () {
             showMessage('Network error. Please try again.', 'error');
         }
     }
-    
+
     // EXPORT PARTICIPANTS FUNCTION
     async function exportParticipants() {
         if (!currentManagedTournamentId) {
             showMessage('No tournament selected', 'error');
             return;
         }
-    
+
         try {
             showMessage('Exporting participants...', 'info');
-    
+
             const response = await adminFetch(`/api/admin/tournament/${currentManagedTournamentId}/export-participants`);
-            
+
             if (!response) return;
-    
+
             const exportData = await response.json();
-    
+
             // Create downloadable file
             const dataStr = JSON.stringify(exportData, null, 2);
             const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    
+
             // Create download link
             const url = URL.createObjectURL(dataBlob);
             const link = document.createElement('a');
             link.href = url;
             link.download = `tournament-${currentManagedTournamentId}-participants-${new Date().toISOString().split('T')[0]}.json`;
-            
+
             // Trigger download
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
-    
+
             showMessage(`Exported ${exportData.total_participants} participants successfully!`, 'success');
-    
+
         } catch (error) {
             console.error('Error exporting participants:', error);
             showMessage('Failed to export participants', 'error');
         }
     }
-    
+
     // SEND BULK MESSAGE FUNCTION
     async function sendBulkMessage() {
         if (!currentManagedTournamentId) {
             showMessage('No tournament selected', 'error');
             return;
         }
-    
+
         // Get message from user
         const message = prompt('📢 Send message to all tournament participants:\n\n(This will appear in tournament chat with [ADMIN BROADCAST] prefix)');
-        
+
         if (!message) {
             return; // User cancelled
         }
-    
+
         if (message.trim().length === 0) {
             showMessage('Message cannot be empty', 'error');
             return;
         }
-    
+
         if (message.length > 200) {
             showMessage('Message too long (max 200 characters)', 'error');
             return;
         }
-    
+
         // Confirm action
         const confirmSend = window.confirm(`Send this message to all tournament participants?\n\n"${message}"\n\nThis cannot be undone.`);
-        
+
         if (!confirmSend) {
             return;
         }
-    
+
         try {
             const response = await adminFetch(`/api/admin/tournament/${currentManagedTournamentId}/bulk-message`, {
                 method: 'POST',
@@ -1342,11 +1337,11 @@ document.addEventListener('DOMContentLoaded', function () {
                 },
                 body: JSON.stringify({ message: message.trim() })
             });
-    
+
             if (!response) return;
-    
+
             const result = await response.json();
-    
+
             if (result.success) {
                 showMessage('Bulk message sent to all participants!', 'success');
                 // Refresh live chat to show the message
@@ -1359,32 +1354,54 @@ document.addEventListener('DOMContentLoaded', function () {
             showMessage('Network error. Please try again.', 'error');
         }
     }
-    
+
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
-    
-    // FORM HANDLERS
 
+    // FORM HANDLERS
     if (createTournamentForm) {
         createTournamentForm.addEventListener('submit', async function (e) {
             e.preventDefault();
 
-            const formData = new FormData(createTournamentForm);
-            const tournamentData = {
-                name: formData.get('name'),
-                description: formData.get('description'),
-                entry_fee: parseFloat(formData.get('entry_fee')),
-                prize_pool: parseFloat(formData.get('prize_pool')),
-                max_participants: parseInt(formData.get('max_participants')),
-                start_date: formData.get('start_date'),
-                end_date: formData.get('end_date')
-            };
+            // PREVENT DOUBLE SUBMISSION
+            if (isCreatingTournament) {
+                console.log('Tournament creation already in progress...');
+                return;
+            }
+
+            isCreatingTournament = true;
+
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            const originalText = submitBtn.innerHTML;
 
             try {
-                const response = await adminFetch('/api/admin/tournaments', {
+                // Disable button and show loading
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '🔄 Creating Tournament...';
+
+                const formData = new FormData(createTournamentForm);
+                const tournamentData = {
+                    name: formData.get('name'),
+                    description: formData.get('description'),
+                    game_type: formData.get('game_type'),
+                    team_mode: formData.get('team_mode'),
+                    entry_fee: parseFloat(formData.get('entry_fee')),
+                    prize_pool: parseFloat(formData.get('prize_pool')),
+                    max_participants: parseInt(formData.get('max_participants')),
+                    start_date: formData.get('start_date'),
+                    end_date: formData.get('end_date'),
+                    kill_points: parseInt(formData.get('kill_points')) || 1,
+                    rank_points: formData.get('rank_points') || '{"1":10,"2":8,"3":6,"4":4,"5":2,"6":1}',
+                    match_type: formData.get('match_type') || 'Battle Royale'
+                };
+
+                console.log('Creating tournament with data:', tournamentData);
+
+                // Use ONLY the enhanced endpoint
+                const response = await fetch('/api/admin/tournaments/enhanced', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1392,22 +1409,27 @@ document.addEventListener('DOMContentLoaded', function () {
                     body: JSON.stringify(tournamentData)
                 });
 
-                if (!response) return;
-
                 const result = await response.json();
 
-                if (result.success) {
-                    showMessage(result.message, 'success');
+                if (response.ok && result.success) {
+                    showMessage(result.message || 'Tournament created successfully!', 'success');
                     createTournamentForm.reset();
                     loadAnalytics();
                     if (document.getElementById('tournamentsTab').classList.contains('active')) {
                         loadTournaments();
                     }
                 } else {
-                    showMessage(result.error || 'Failed to create tournament', 'error');
+                    throw new Error(result.error || 'Failed to create tournament');
                 }
+
             } catch (error) {
-                showMessage('Network error. Please try again.', 'error');
+                console.error('Tournament creation error:', error);
+                showMessage(error.message || 'Failed to create tournament', 'error');
+            } finally {
+                // Re-enable button and reset state
+                isCreatingTournament = false;
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalText;
             }
         });
     }
@@ -1449,7 +1471,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // MODAL HANDLERS
-
     if (closeModal) {
         closeModal.addEventListener('click', function () {
             winningsModal.style.display = 'none';
@@ -1469,7 +1490,6 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     // LOGOUT HANDLER
-
     if (logoutBtn) {
         logoutBtn.addEventListener('click', async function () {
             try {
@@ -1488,7 +1508,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // UTILITY FUNCTIONS
-
     async function loadUserInfo() {
         try {
             const response = await adminFetch('/api/user');
@@ -1525,7 +1544,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // BAN SYSTEM FUNCTIONS
-
     function initializeBanModal() {
         const banModalHTML = `
         <div id="banModal" class="modal ban-modal">
@@ -1742,7 +1760,6 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 // BAN SYSTEM HELPER FUNCTIONS (outside DOMContentLoaded)
-
 function getBanStatusHTML(user) {
     if (user.ban_status === 'active' || !user.ban_status) {
         return '<span class="ban-status ban-status-active">✅ Active</span>';
@@ -1775,3 +1792,266 @@ function getBanActionButton(user) {
                 </button>`;
     }
 }
+
+
+// Enhanced Admin Tournament Creation JavaScript
+// Game images mapping
+const gameImages = {
+    'Free Fire': '/images/games/freefire.jpg',
+    'BGMI': '/images/games/bgmi.jpg',
+    'Valorant': '/images/games/valorant.jpg',
+    'CODM': '/images/games/codm.jpg'
+};
+
+// Initialize enhanced tournament creation
+function initializeEnhancedTournamentCreation() {
+    const gameTypeSelect = document.getElementById('gameType');
+    const teamModeSelect = document.getElementById('teamMode');
+    const autoFillBtn = document.getElementById('autoFillBtn');
+    const tournamentForm = document.getElementById('createTournamentForm');
+
+    // Auto-fill tournament name
+    if (autoFillBtn) {
+        autoFillBtn.addEventListener('click', autoFillTournamentName);
+    }
+
+    // Live preview updates
+    if (gameTypeSelect) gameTypeSelect.addEventListener('change', updateTournamentPreview);
+    if (teamModeSelect) teamModeSelect.addEventListener('change', updateTournamentPreview);
+
+    // Form inputs for preview
+    const previewInputs = [
+        'tournamentName', 'entryFee', 'prizePool', 'maxParticipants'
+    ];
+
+    previewInputs.forEach(inputId => {
+        const input = document.getElementById(inputId);
+        if (input) {
+            input.addEventListener('input', updateTournamentPreview);
+        }
+    });
+
+    // Enhanced form submission
+    if (tournamentForm) {
+        tournamentForm.removeEventListener('submit', handleEnhancedTournamentCreation);
+        tournamentForm.addEventListener('submit', handleEnhancedTournamentCreation);
+    }
+
+    // Set default values
+    setDefaultValues();
+}
+
+// Set default values for new fields
+function setDefaultValues() {
+    const killPointsInput = document.getElementById('killPoints');
+    const rankPointsInput = document.getElementById('rankPoints');
+    const matchTypeSelect = document.getElementById('matchType');
+
+    if (killPointsInput && !killPointsInput.value) {
+        killPointsInput.value = '1';
+    }
+
+    if (rankPointsInput && !rankPointsInput.value) {
+        rankPointsInput.value = '{"1":10,"2":8,"3":6,"4":4,"5":2,"6":1}';
+    }
+
+    if (matchTypeSelect && !matchTypeSelect.value) {
+        matchTypeSelect.value = 'Battle Royale';
+    }
+}
+
+// Auto-fill tournament name based on selection
+function autoFillTournamentName() {
+    const gameType = document.getElementById('gameType').value;
+    const teamMode = document.getElementById('teamMode').value;
+    const tournamentNameInput = document.getElementById('tournamentName');
+
+    if (!gameType || !teamMode) {
+        showMessage('Please select both game type and team mode first', 'warning');
+        return;
+    }
+
+    const modeNames = {
+        'solo': 'Solo',
+        'duo': 'Duo',
+        'squad': 'Squad'
+    };
+
+    const currentDate = new Date();
+    const dateString = currentDate.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric'
+    });
+
+    const autoName = `${gameType} ${modeNames[teamMode]} Championship - ${dateString}`;
+
+    if (tournamentNameInput) {
+        tournamentNameInput.value = autoName;
+        updateTournamentPreview();
+    }
+}
+
+// Update tournament preview
+function updateTournamentPreview() {
+    const gameType = document.getElementById('gameType').value;
+    const teamMode = document.getElementById('teamMode').value;
+    const tournamentName = document.getElementById('tournamentName').value;
+    const entryFee = document.getElementById('entryFee').value;
+    const prizePool = document.getElementById('prizePool').value;
+    const maxParticipants = document.getElementById('maxParticipants').value;
+
+    const preview = document.getElementById('tournamentPreview');
+    const previewGameImage = document.getElementById('previewGameImage');
+    const previewGameBadge = document.getElementById('previewGameBadge');
+    const previewModeBadge = document.getElementById('previewModeBadge');
+    const previewName = document.getElementById('previewName');
+    const previewFee = document.getElementById('previewFee');
+    const previewPrize = document.getElementById('previewPrize');
+    const previewMax = document.getElementById('previewMax');
+
+    // Show preview if we have basic info
+    if (gameType || teamMode || tournamentName) {
+        if (preview) preview.style.display = 'block';
+
+        // Update preview content
+        if (previewGameImage && gameType) {
+            previewGameImage.src = gameImages[gameType] || '/images/games/default.jpg';
+        }
+
+        if (previewGameBadge) {
+            previewGameBadge.textContent = gameType || 'Select Game';
+        }
+
+        if (previewModeBadge) {
+            const modeLabels = { 'solo': 'Solo', 'duo': 'Duo', 'squad': 'Squad' };
+            previewModeBadge.textContent = modeLabels[teamMode] || 'Select Mode';
+        }
+
+        if (previewName) {
+            previewName.textContent = tournamentName || 'Tournament Name';
+        }
+
+        if (previewFee) {
+            previewFee.textContent = entryFee || '0';
+        }
+
+        if (previewPrize) {
+            previewPrize.textContent = prizePool || '0';
+        }
+
+        if (previewMax) {
+            previewMax.textContent = maxParticipants || '0';
+        }
+    } else {
+        if (preview) preview.style.display = 'none';
+    }
+}
+
+// Enhanced tournament creation handler
+async function handleEnhancedTournamentCreation(e) {
+    e.preventDefault();
+
+    const formData = new FormData(e.target);
+    const tournamentData = {
+        name: formData.get('name'),
+        description: formData.get('description'),
+        game_type: formData.get('game_type'),
+        team_mode: formData.get('team_mode'),
+        entry_fee: parseFloat(formData.get('entry_fee')),
+        prize_pool: parseFloat(formData.get('prize_pool')),
+        max_participants: parseInt(formData.get('max_participants')),
+        start_date: formData.get('start_date'),
+        end_date: formData.get('end_date'),
+        kill_points: parseInt(formData.get('kill_points')) || 1,
+        rank_points: formData.get('rank_points') || '{"1":10,"2":8,"3":6,"4":4,"5":2,"6":1}',
+        match_type: formData.get('match_type') || 'Battle Royale'
+    };
+
+    // Validation
+    if (!tournamentData.name || !tournamentData.game_type || !tournamentData.team_mode) {
+        showMessage('Please fill in all required fields including game type and team mode', 'error');
+        return;
+    }
+
+    // Validate JSON format for rank points
+    try {
+        JSON.parse(tournamentData.rank_points);
+    } catch (error) {
+        showMessage('Invalid rank points format. Please use valid JSON format.', 'error');
+        return;
+    }
+
+    // Validate dates
+    const startDate = new Date(tournamentData.start_date);
+    const endDate = new Date(tournamentData.end_date);
+    const now = new Date();
+
+    if (startDate < now) {
+        showMessage('Start date cannot be in the past', 'error');
+        return;
+    }
+
+    if (endDate <= startDate) {
+        showMessage('End date must be after start date', 'error');
+        return;
+    }
+
+    try {
+        const submitBtn = e.target.querySelector('.create-tournament-btn');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '🔄 Creating Tournament...';
+        }
+
+        // Use enhanced API endpoint
+        const response = await fetch('/api/admin/tournaments/enhanced', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(tournamentData)
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            showMessage(result.message || 'Enhanced tournament created successfully!', 'success');
+
+            // Reset form
+            e.target.reset();
+            setDefaultValues();
+            updateTournamentPreview();
+
+            // Refresh tournaments list if visible
+            if (typeof loadTournaments === 'function') {
+                await loadTournaments();
+            }
+
+        } else {
+            throw new Error(result.error || 'Failed to create tournament');
+        }
+
+    } catch (error) {
+        console.error('Enhanced tournament creation error:', error);
+        showMessage(error.message || 'Failed to create tournament', 'error');
+    } finally {
+        const submitBtn = e.target.querySelector('.create-tournament-btn');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '🚀 Create Enhanced Tournament';
+        }
+    }
+}
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', function () {
+    // Small delay to ensure all elements are loaded
+    setTimeout(() => {
+        initializeEnhancedTournamentCreation();
+    }, 500);
+});
+
+// Make functions available globally
+window.initializeEnhancedTournamentCreation = initializeEnhancedTournamentCreation;
+window.autoFillTournamentName = autoFillTournamentName;
+window.updateTournamentPreview = updateTournamentPreview;
