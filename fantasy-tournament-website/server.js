@@ -286,6 +286,16 @@ app.get('/api/admin/session-check', async (req, res) => {
     }
 });
 
+function getGameImageUrl(gameType) {
+    const gameImages = {
+        'Free Fire': '/images/games/freefire.jpg',
+        'BGMI': '/images/games/bgmi.jpg',
+        'Valorant': '/images/games/valorant.jpg',
+        'CODM': '/images/games/codm.jpg'
+    };
+    return gameImages[gameType] || '/images/games/freefire.jpg';
+}
+
 // API Routes - User Info
 app.get('/api/user', requireAuth, async (req, res) => {
     try {
@@ -310,6 +320,8 @@ app.get('/api/user', requireAuth, async (req, res) => {
 // API Routes - Tournaments
 app.get('/api/tournaments', requireAuth, async (req, res) => {
     try {
+        console.log('Loading tournaments for user:', req.session.userId);
+        
         const { data: tournaments, error } = await supabase
             .from('tournaments')
             .select(`
@@ -323,16 +335,27 @@ app.get('/api/tournaments', requireAuth, async (req, res) => {
             return res.status(500).json({ error: 'Failed to get tournaments' });
         }
 
-        // Transform data to match expected format
-        const tournamentsWithRegistration = tournaments.map(tournament => ({
-            ...tournament,
-            is_registered: tournament.tournament_registrations.some(reg => reg.user_id === req.session.userId) ? 1 : 0
-        }));
+        // FIXED: Add game data to each tournament
+        const tournamentsWithRegistration = tournaments.map(tournament => {
+            const gameType = tournament.game_type || 'Free Fire';
+            const teamMode = tournament.team_mode || 'solo';
+            const gameImageUrl = tournament.game_image_url || getGameImageUrl(gameType);
 
+            return {
+                ...tournament,
+                game_type: gameType,
+                team_mode: teamMode,
+                game_image_url: gameImageUrl,
+                is_registered: tournament.tournament_registrations.some(reg => reg.user_id === req.session.userId) ? 1 : 0
+            };
+        });
+
+        console.log('Processed tournaments:', tournamentsWithRegistration.length);
         res.json(tournamentsWithRegistration);
+
     } catch (error) {
         console.error('Get tournaments error:', error);
-        return res.status(500).json({ error: 'Failed to get tournaments' });
+        res.status(500).json({ error: 'Failed to get tournaments' });
     }
 });
 
@@ -722,34 +745,6 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
 });
 
 // Admin Tournaments Routes
-app.post('/api/admin/tournaments', requireAdmin, async (req, res) => {
-    const { name, description, entry_fee, prize_pool, max_participants, start_date, end_date } = req.body;
-
-    try {
-        const { data, error } = await supabase
-            .from('tournaments')
-            .insert([{
-                name,
-                description,
-                entry_fee,
-                prize_pool,
-                max_participants,
-                start_date,
-                end_date
-            }]);
-
-        if (error) {
-            console.error('Create tournament error:', error);
-            return res.status(500).json({ error: 'Failed to create tournament' });
-        }
-
-        res.json({ success: true, message: 'Tournament created successfully' });
-    } catch (error) {
-        console.error('Create tournament error:', error);
-        return res.status(500).json({ error: 'Failed to create tournament' });
-    }
-});
-
 app.get('/api/admin/tournaments', requireAdmin, async (req, res) => {
     try {
         const { data: tournaments, error } = await supabase
@@ -1479,6 +1474,510 @@ app.get('/api/tournament/:id/players', requireAuth, async (req, res) => {
         return res.status(500).json({ error: 'Failed to get players' });
     }
 });
+
+
+// Enhanced Tournament Routes - Add these to your server.js file
+
+// Enhanced tournaments API with game types and team modes
+app.get('/api/tournaments/enhanced', requireAuth, async (req, res) => {
+    try {
+        const { data: tournaments, error } = await supabase
+            .from('tournaments')
+            .select(`
+                *,
+                tournament_registrations!left(user_id),
+                team_registrations!left(team_leader_id)
+            `)
+            .order('start_date', { ascending: true });
+
+        if (error) {
+            console.error('Get enhanced tournaments error:', error);
+            return res.status(500).json({ error: 'Failed to get tournaments' });
+        }
+
+        // Transform data to include registration status
+        const tournamentsWithRegistration = tournaments.map(tournament => {
+            // Check solo registration
+            const soloRegistered = tournament.tournament_registrations.some(reg => reg.user_id === req.session.userId);
+            
+            // Check team registration (as leader)
+            const teamRegistered = tournament.team_registrations.some(team => team.team_leader_id === req.session.userId);
+            
+            return {
+                ...tournament,
+                is_registered: (soloRegistered || teamRegistered) ? 1 : 0
+            };
+        });
+
+        res.json(tournamentsWithRegistration);
+    } catch (error) {
+        console.error('Get enhanced tournaments error:', error);
+        return res.status(500).json({ error: 'Failed to get tournaments' });
+    }
+});
+
+// Enhanced tournament registration with combined wallet balance
+app.post('/api/tournaments/register', requireAuth, checkBanStatus, async (req, res) => {
+    const { tournamentId } = req.body;
+
+    try {
+        // Get tournament details
+        const { data: tournament, error: tournamentError } = await supabase
+            .from('tournaments')
+            .select('*')
+            .eq('id', tournamentId)
+            .single();
+
+        if (tournamentError || !tournament) {
+            return res.status(400).json({ error: 'Tournament not found' });
+        }
+
+        // Get user details
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', req.session.userId)
+            .single();
+
+        if (userError || !user) {
+            return res.status(400).json({ error: 'User not found' });
+        }
+
+        // Check combined balance (wallet + winnings for registration)
+        const totalBalance = parseFloat(user.wallet_balance) + parseFloat(user.winnings_balance);
+        if (totalBalance < tournament.entry_fee) {
+            return res.status(400).json({ error: 'Insufficient combined balance' });
+        }
+
+        // Check if tournament is full
+        if (tournament.current_participants >= tournament.max_participants) {
+            return res.status(400).json({ error: 'Tournament is full' });
+        }
+
+        // Check if already registered (solo or team)
+        const { data: existingSolo, error: soloCheckError } = await supabase
+            .from('tournament_registrations')
+            .select('id')
+            .eq('user_id', req.session.userId)
+            .eq('tournament_id', tournamentId)
+            .single();
+
+        if (existingSolo) {
+            return res.status(400).json({ error: 'Already registered for this tournament' });
+        }
+
+        const { data: existingTeam, error: teamCheckError } = await supabase
+            .from('team_registrations')
+            .select('id')
+            .eq('team_leader_id', req.session.userId)
+            .eq('tournament_id', tournamentId)
+            .single();
+
+        if (existingTeam) {
+            return res.status(400).json({ error: 'Already registered as team leader for this tournament' });
+        }
+
+        // Register user for tournament
+        const { error: registrationError } = await supabase
+            .from('tournament_registrations')
+            .insert([{
+                user_id: req.session.userId,
+                tournament_id: tournamentId
+            }]);
+
+        if (registrationError) {
+            console.error('Registration error:', registrationError);
+            return res.status(500).json({ error: 'Registration failed' });
+        }
+
+        // Deduct from wallet first, then winnings if needed
+        let newWalletBalance = user.wallet_balance;
+        let newWinningsBalance = user.winnings_balance;
+        let remainingFee = tournament.entry_fee;
+
+        if (newWalletBalance >= remainingFee) {
+            newWalletBalance -= remainingFee;
+        } else {
+            remainingFee -= newWalletBalance;
+            newWalletBalance = 0;
+            newWinningsBalance -= remainingFee;
+        }
+
+        // Update user balances
+        const { error: balanceError } = await supabase
+            .from('users')
+            .update({
+                wallet_balance: newWalletBalance,
+                winnings_balance: newWinningsBalance
+            })
+            .eq('id', req.session.userId);
+
+        if (balanceError) {
+            console.error('Balance update error:', balanceError);
+            return res.status(500).json({ error: 'Payment failed' });
+        }
+
+        // Update tournament participant count
+        const { error: tournamentUpdateError } = await supabase
+            .from('tournaments')
+            .update({
+                current_participants: tournament.current_participants + 1
+            })
+            .eq('id', tournamentId);
+
+        if (tournamentUpdateError) {
+            console.error('Tournament update error:', tournamentUpdateError);
+            return res.status(500).json({ error: 'Registration failed' });
+        }
+
+        // Record transaction
+        const { error: transactionError } = await supabase
+            .from('wallet_transactions')
+            .insert([{
+                user_id: req.session.userId,
+                transaction_type: 'debit',
+                amount: tournament.entry_fee,
+                balance_type: 'combined',
+                description: `Tournament registration: ${tournament.name}`
+            }]);
+
+        if (transactionError) {
+            console.error('Transaction error:', transactionError);
+            return res.status(500).json({ error: 'Transaction recording failed' });
+        }
+
+        res.json({ success: true, message: 'Registration successful' });
+    } catch (error) {
+        console.error('Tournament registration error:', error);
+        return res.status(500).json({ error: 'Registration failed' });
+    }
+});
+
+// Team registration endpoint
+app.post('/api/tournaments/register-team', requireAuth, checkBanStatus, async (req, res) => {
+    const { tournamentId, teamName, teamSize, members } = req.body;
+
+    if (!teamName || !teamSize || !members || !Array.isArray(members)) {
+        return res.status(400).json({ error: 'Invalid team data' });
+    }
+
+    if (teamSize < 2 || teamSize > 4) {
+        return res.status(400).json({ error: 'Invalid team size' });
+    }
+
+    if (members.length !== teamSize - 1) {
+        return res.status(400).json({ error: 'Member count does not match team size' });
+    }
+
+    try {
+        // Get tournament details
+        const { data: tournament, error: tournamentError } = await supabase
+            .from('tournaments')
+            .select('*')
+            .eq('id', tournamentId)
+            .single();
+
+        if (tournamentError || !tournament) {
+            return res.status(400).json({ error: 'Tournament not found' });
+        }
+
+        // Validate tournament supports team mode
+        const maxTeamSize = tournament.team_mode === 'duo' ? 2 : tournament.team_mode === 'squad' ? 4 : 1;
+        if (teamSize > maxTeamSize) {
+            return res.status(400).json({ error: `Tournament only supports up to ${maxTeamSize} players` });
+        }
+
+        // Get team leader details
+        const { data: leader, error: leaderError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', req.session.userId)
+            .single();
+
+        if (leaderError || !leader) {
+            return res.status(400).json({ error: 'User not found' });
+        }
+
+        // Check if leader has enough balance
+        const totalBalance = parseFloat(leader.wallet_balance) + parseFloat(leader.winnings_balance);
+        const totalEntryFee = tournament.entry_fee * teamSize;
+        
+        if (totalBalance < totalEntryFee) {
+            return res.status(400).json({ error: `Insufficient balance. Need ₹${totalEntryFee} for team registration` });
+        }
+
+        // Validate team members exist
+        const { data: memberUsers, error: memberError } = await supabase
+            .from('users')
+            .select('id, username')
+            .in('username', members);
+
+        if (memberError) {
+            console.error('Member validation error:', memberError);
+            return res.status(500).json({ error: 'Failed to validate team members' });
+        }
+
+        if (memberUsers.length !== members.length) {
+            const foundUsernames = memberUsers.map(u => u.username);
+            const notFound = members.filter(m => !foundUsernames.includes(m));
+            return res.status(400).json({ error: `Users not found: ${notFound.join(', ')}` });
+        }
+
+        // Check if tournament has space for the team
+        const spotsNeeded = teamSize;
+        const availableSpots = tournament.max_participants - tournament.current_participants;
+        
+        if (availableSpots < spotsNeeded) {
+            return res.status(400).json({ error: 'Not enough spots available for your team' });
+        }
+
+        // Check if any team member is already registered
+        const allUserIds = [req.session.userId, ...memberUsers.map(u => u.id)];
+        
+        const { data: existingRegs, error: regCheckError } = await supabase
+            .from('tournament_registrations')
+            .select('user_id')
+            .eq('tournament_id', tournamentId)
+            .in('user_id', allUserIds);
+
+        if (existingRegs && existingRegs.length > 0) {
+            return res.status(400).json({ error: 'One or more team members are already registered' });
+        }
+
+        // Create team registration
+        const { data: teamReg, error: teamRegError } = await supabase
+            .from('team_registrations')
+            .insert([{
+                tournament_id: tournamentId,
+                team_leader_id: req.session.userId,
+                team_name: teamName,
+                team_members: allUserIds,
+                team_size: teamSize
+            }])
+            .select()
+            .single();
+
+        if (teamRegError) {
+            console.error('Team registration error:', teamRegError);
+            return res.status(500).json({ error: 'Team registration failed' });
+        }
+
+        // Register all team members individually
+        const registrations = allUserIds.map(userId => ({
+            user_id: userId,
+            tournament_id: tournamentId
+        }));
+
+        const { error: memberRegError } = await supabase
+            .from('tournament_registrations')
+            .insert(registrations);
+
+        if (memberRegError) {
+            console.error('Member registration error:', memberRegError);
+            return res.status(500).json({ error: 'Failed to register team members' });
+        }
+
+        // Deduct entry fee from team leader (pays for whole team)
+        let newWalletBalance = leader.wallet_balance;
+        let newWinningsBalance = leader.winnings_balance;
+        let remainingFee = totalEntryFee;
+
+        if (newWalletBalance >= remainingFee) {
+            newWalletBalance -= remainingFee;
+        } else {
+            remainingFee -= newWalletBalance;
+            newWalletBalance = 0;
+            newWinningsBalance -= remainingFee;
+        }
+
+        const { error: balanceError } = await supabase
+            .from('users')
+            .update({
+                wallet_balance: newWalletBalance,
+                winnings_balance: newWinningsBalance
+            })
+            .eq('id', req.session.userId);
+
+        if (balanceError) {
+            console.error('Balance update error:', balanceError);
+            return res.status(500).json({ error: 'Payment failed' });
+        }
+
+        // Update tournament participant count
+        const { error: tournamentUpdateError } = await supabase
+            .from('tournaments')
+            .update({
+                current_participants: tournament.current_participants + teamSize
+            })
+            .eq('id', tournamentId);
+
+        if (tournamentUpdateError) {
+            console.error('Tournament update error:', tournamentUpdateError);
+            return res.status(500).json({ error: 'Registration failed' });
+        }
+
+        // Record transaction
+        const { error: transactionError } = await supabase
+            .from('wallet_transactions')
+            .insert([{
+                user_id: req.session.userId,
+                transaction_type: 'debit',
+                amount: totalEntryFee,
+                balance_type: 'combined',
+                description: `Team registration: ${tournament.name} (${teamName})`
+            }]);
+
+        if (transactionError) {
+            console.error('Transaction error:', transactionError);
+            return res.status(500).json({ error: 'Transaction recording failed' });
+        }
+
+        res.json({ 
+            success: true, 
+            message: `Team "${teamName}" registered successfully for ₹${totalEntryFee}`,
+            teamId: teamReg.id
+        });
+
+    } catch (error) {
+        console.error('Team registration error:', error);
+        return res.status(500).json({ error: 'Team registration failed' });
+    }
+});
+
+// Enhanced admin tournament creation
+app.post('/api/admin/tournaments/enhanced', requireAdmin, async (req, res) => {
+    const { 
+        name, 
+        description, 
+        game_type, 
+        team_mode, 
+        entry_fee, 
+        prize_pool, 
+        max_participants, 
+        start_date, 
+        end_date,
+        kill_points,
+        rank_points,
+        match_type
+    } = req.body;
+
+    if (!name || !game_type || !team_mode || !entry_fee || !prize_pool || !max_participants || !start_date) {
+        return res.status(400).json({ error: 'Required fields missing' });
+    }
+
+    // Validate game type
+    const validGames = ['Free Fire', 'BGMI', 'Valorant', 'CODM'];
+    if (!validGames.includes(game_type)) {
+        return res.status(400).json({ error: 'Invalid game type' });
+    }
+
+    // Validate team mode
+    const validModes = ['solo', 'duo', 'squad'];
+    if (!validModes.includes(team_mode)) {
+        return res.status(400).json({ error: 'Invalid team mode' });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('tournaments')
+            .insert([{
+                name,
+                description: description || `${game_type} ${team_mode} tournament`,
+                game_type,
+                team_mode,
+                entry_fee: parseFloat(entry_fee),
+                prize_pool: parseFloat(prize_pool),
+                max_participants: parseInt(max_participants),
+                start_date,
+                end_date: end_date || start_date,
+                kill_points: parseInt(kill_points) || 1,
+                rank_points: rank_points || '{"1":10,"2":8,"3":6,"4":4,"5":2,"6":1}',
+                match_type: match_type || 'Battle Royale',
+                game_image_url: getGameImageUrl(game_type), // FIXED: Use helper function
+                status: 'upcoming',
+                current_participants: 0
+            }])
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Create enhanced tournament error:', error);
+            return res.status(500).json({ error: 'Failed to create tournament' });
+        }
+
+        res.json({ 
+            success: true, 
+            message: 'Enhanced tournament created successfully',
+            tournament: data
+        });
+    } catch (error) {
+        console.error('Create enhanced tournament error:', error);
+        return res.status(500).json({ error: 'Failed to create tournament' });
+    }
+});
+
+// Get team details for a tournament
+app.get('/api/tournament/:id/teams', requireAuth, async (req, res) => {
+    const tournamentId = req.params.id;
+
+    try {
+        const { data: teams, error } = await supabase
+            .from('team_registrations')
+            .select(`
+                *,
+                users!team_registrations_team_leader_id_fkey(username)
+            `)
+            .eq('tournament_id', tournamentId)
+            .eq('is_active', true);
+
+        if (error) {
+            console.error('Get teams error:', error);
+            return res.status(500).json({ error: 'Failed to get teams' });
+        }
+
+        // Get member details for each team
+        const teamsWithMembers = await Promise.all(teams.map(async (team) => {
+            const { data: members, error: memberError } = await supabase
+                .from('users')
+                .select('id, username')
+                .in('id', team.team_members);
+
+            return {
+                ...team,
+                leader_username: team.users.username,
+                members: members || []
+            };
+        }));
+
+        res.json(teamsWithMembers);
+    } catch (error) {
+        console.error('Get teams error:', error);
+        return res.status(500).json({ error: 'Failed to get teams' });
+    }
+});
+
+app.get('/api/debug/tournaments', requireAuth, async (req, res) => {
+    try {
+        const { data: tournaments, error } = await supabase
+            .from('tournaments')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(3);
+
+        if (error) {
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json({
+            message: 'DEBUG: Raw tournament data from database',
+            tournaments: tournaments,
+            count: tournaments.length
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 // Initialize and start server
 async function initializeServer() {
