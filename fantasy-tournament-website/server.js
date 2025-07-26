@@ -1248,9 +1248,9 @@ app.post('/api/admin/tournament/:id/bulk-message', requireAdmin, async (req, res
 // Tournament Announcements Route (for users/admins)
 app.get('/api/tournament/:id/announcements', requireAuth, async (req, res) => {
     const tournamentId = req.params.id;
-
+    
     try {
-        // Check if user is admin OR registered for this tournament
+        // FIXED: Check if user is admin OR registered for this tournament
         if (!req.session.isAdmin) {
             const { data: registration, error: regError } = await supabase
                 .from('tournament_registrations')
@@ -1277,6 +1277,7 @@ app.get('/api/tournament/:id/announcements', requireAuth, async (req, res) => {
         }
 
         res.json(announcements);
+
     } catch (error) {
         console.error('Get announcements error:', error);
         return res.status(500).json({ error: 'Failed to get announcements' });
@@ -1286,9 +1287,9 @@ app.get('/api/tournament/:id/announcements', requireAuth, async (req, res) => {
 // Tournament Chat Route (for users/admins)
 app.get('/api/tournament/:id/chat', requireAuth, async (req, res) => {
     const tournamentId = req.params.id;
-
+    
     try {
-        // Check if user is admin OR registered for this tournament
+        // FIXED: Check if user is admin OR registered for this tournament
         if (!req.session.isAdmin) {
             const { data: registration, error: regError } = await supabase
                 .from('tournament_registrations')
@@ -1325,6 +1326,7 @@ app.get('/api/tournament/:id/chat', requireAuth, async (req, res) => {
         }));
 
         res.json(transformedMessages);
+
     } catch (error) {
         console.error('Get chat messages error:', error);
         return res.status(500).json({ error: 'Failed to get messages' });
@@ -1345,16 +1347,18 @@ app.post('/api/tournament/:id/chat', requireAuth, checkBanStatus, async (req, re
     }
 
     try {
-        // Check if user is registered for this tournament
-        const { data: registration, error: regError } = await supabase
-            .from('tournament_registrations')
-            .select('id')
-            .eq('tournament_id', tournamentId)
-            .eq('user_id', req.session.userId)
-            .single();
+        // FIXED: Check if user is admin OR registered for this tournament
+        if (!req.session.isAdmin) {
+            const { data: registration, error: regError } = await supabase
+                .from('tournament_registrations')
+                .select('id')
+                .eq('tournament_id', tournamentId)
+                .eq('user_id', req.session.userId)
+                .single();
 
-        if (regError || !registration) {
-            return res.status(403).json({ error: 'Access denied' });
+            if (regError || !registration) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
         }
 
         // Insert chat message
@@ -1372,6 +1376,7 @@ app.post('/api/tournament/:id/chat', requireAuth, checkBanStatus, async (req, re
         }
 
         res.json({ success: true, message: 'Message sent successfully' });
+
     } catch (error) {
         console.error('Send message error:', error);
         return res.status(500).json({ error: 'Failed to send message' });
@@ -1381,18 +1386,23 @@ app.post('/api/tournament/:id/chat', requireAuth, checkBanStatus, async (req, re
 // Tournament Lobby Data Route
 app.get('/api/tournament/:id/lobby', requireAuth, async (req, res) => {
     const tournamentId = req.params.id;
-
+    
     try {
-        // First check if user is registered for this tournament
-        const { data: registration, error: regError } = await supabase
-            .from('tournament_registrations')
-            .select('*')
-            .eq('user_id', req.session.userId)
-            .eq('tournament_id', tournamentId)
-            .single();
+        // FIXED: Check if user is admin first, if yes, skip registration check
+        if (!req.session.isAdmin) {
+            // Only check registration for non-admin users
+            const { data: registration, error: regError } = await supabase
+                .from('tournament_registrations')
+                .select('*')
+                .eq('user_id', req.session.userId)
+                .eq('tournament_id', tournamentId)
+                .single();
 
-        if (regError || !registration) {
-            return res.status(403).json({ error: 'You are not registered for this tournament' });
+            if (regError || !registration) {
+                return res.status(403).json({ error: 'You are not registered for this tournament' });
+            }
+        } else {
+            console.log(`✅ Admin access granted to tournament ${tournamentId} for user ${req.session.userId}`);
         }
 
         // Get tournament details
@@ -1419,6 +1429,7 @@ app.get('/api/tournament/:id/lobby', requireAuth, async (req, res) => {
             matchDetails: matchDetails || null,
             onlineCount: tournament.current_participants // Simplified for now
         });
+
     } catch (error) {
         console.error('Get tournament lobby error:', error);
         return res.status(500).json({ error: 'Failed to get tournament data' });
@@ -1428,18 +1439,20 @@ app.get('/api/tournament/:id/lobby', requireAuth, async (req, res) => {
 // Tournament Players Route
 app.get('/api/tournament/:id/players', requireAuth, async (req, res) => {
     const tournamentId = req.params.id;
-
+    
     try {
-        // Check if user is registered for this tournament
-        const { data: registration, error: regError } = await supabase
-            .from('tournament_registrations')
-            .select('id')
-            .eq('user_id', req.session.userId)
-            .eq('tournament_id', tournamentId)
-            .single();
+        // FIXED: Check if user is admin OR registered for this tournament
+        if (!req.session.isAdmin) {
+            const { data: registration, error: regError } = await supabase
+                .from('tournament_registrations')
+                .select('id')
+                .eq('user_id', req.session.userId)
+                .eq('tournament_id', tournamentId)
+                .single();
 
-        if (regError || !registration) {
-            return res.status(403).json({ error: 'Access denied' });
+            if (regError || !registration) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
         }
 
         // Get all players for this tournament
@@ -1469,6 +1482,7 @@ app.get('/api/tournament/:id/players', requireAuth, async (req, res) => {
         }));
 
         res.json(transformedPlayers);
+
     } catch (error) {
         console.error('Get tournament players error:', error);
         return res.status(500).json({ error: 'Failed to get players' });
