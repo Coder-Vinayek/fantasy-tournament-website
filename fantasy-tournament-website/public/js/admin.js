@@ -298,6 +298,12 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    // Make functions globally available
+    window.loadPayouts = loadPayouts;
+    window.openPayoutModal = openPayoutModal;
+    window.closePayoutModal = closePayoutModal;
+    window.processPayout = processPayout;
+
     // ====================================
     //  Load Payouts Function
     // ====================================
@@ -2320,13 +2326,8 @@ document.addEventListener('DOMContentLoaded', function () {
     }, 500);
 });
 
-// ====================================
 // Make functions globally available
-// ====================================
+
 window.initializeEnhancedTournamentCreation = initializeEnhancedTournamentCreation;
 window.autoFillTournamentName = autoFillTournamentName;
 window.updateTournamentPreview = updateTournamentPreview;
-window.loadPayouts = loadPayouts;
-window.openPayoutModal = openPayoutModal;
-window.closePayoutModal = closePayoutModal;
-window.processPayout = processPayout;
