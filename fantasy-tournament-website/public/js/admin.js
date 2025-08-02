@@ -1,4 +1,4 @@
-// Enhanced Admin JavaScript with Ban System and Session Management
+// Enhanced Admin JavaScript with Ban System, Session Management, and Payout System
 
 // Ban System Variables
 let banModal = null;
@@ -9,6 +9,27 @@ let currentBanUsername = null;
 let currentManagedTournamentId = null;
 let chatRefreshInterval = null;
 let isCreatingTournament = false;
+
+// NEW: Payout System Variables
+let currentPayoutId = null;
+
+window.showMessage = function (message, type) {
+    const messageDiv = document.getElementById('message');
+    if (!messageDiv) {
+        // Fallback to alert if message div doesn't exist
+        alert(message);
+        return;
+    }
+
+    messageDiv.textContent = message;
+    messageDiv.className = `message ${type}`;
+    messageDiv.style.display = 'block';
+
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        messageDiv.style.display = 'none';
+    }, 5000);
+};
 
 document.addEventListener('DOMContentLoaded', function () {
     const usernameDisplay = document.getElementById('username-display');
@@ -23,6 +44,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const usersContainer = document.getElementById('usersContainer');
     const adminTournamentsContainer = document.getElementById('adminTournamentsContainer');
     const adminTransactionsContainer = document.getElementById('adminTransactionsContainer');
+    const payoutsContainer = document.getElementById('payoutsContainer'); // NEW
 
     // Form elements
     const createTournamentForm = document.getElementById('createTournamentForm');
@@ -40,6 +62,15 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Auto-refresh session every 5 minutes
     setInterval(checkAdminSession, 5 * 60 * 1000);
+
+    // Auto-refresh payouts every 30 seconds if on payouts tab
+    setInterval(function () {
+        const payoutsTab = document.getElementById('payoutsTab');
+        if (payoutsTab && payoutsTab.classList.contains('active')) {
+            loadPayouts();
+            loadAnalytics(); // Update badge count
+        }
+    }, 30000);
 
     // ADMIN SESSION MANAGEMENT
     async function checkAdminSession() {
@@ -95,11 +126,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function switchTab(tabName) {
         // Hide all tabs
+        const tabContents = document.querySelectorAll('.tab-content');
         tabContents.forEach(content => {
             content.classList.remove('active');
         });
 
         // Remove active class from all buttons
+        const tabBtns = document.querySelectorAll('.tab-btn');
         tabBtns.forEach(btn => {
             btn.classList.remove('active');
         });
@@ -118,6 +151,9 @@ document.addEventListener('DOMContentLoaded', function () {
                 break;
             case 'transactions':
                 selectedTab = document.getElementById('transactionsTab');
+                break;
+            case 'payouts': // NEW
+                selectedTab = document.getElementById('payoutsTab');
                 break;
             case 'create-tournament':
                 selectedTab = document.getElementById('createTournamentTab');
@@ -150,13 +186,16 @@ document.addEventListener('DOMContentLoaded', function () {
             case 'transactions':
                 loadTransactions();
                 break;
+            case 'payouts': // NEW
+                loadPayouts();
+                break;
             case 'manage-tournaments':
                 loadManageTournaments();
                 break;
         }
     }
 
-    // ANALYTICS FUNCTIONS
+    // ANALYTICS FUNCTIONS - UPDATED with Payout Count
     async function loadAnalytics() {
         try {
             const response = await adminFetch('/api/admin/analytics');
@@ -174,9 +213,23 @@ document.addEventListener('DOMContentLoaded', function () {
             document.getElementById('entryFees').textContent = (analytics.entryFeesCollected || 0).toFixed(2);
             document.getElementById('recentUsers').textContent = analytics.recentUsers || 0;
 
+            // NEW: Update pending payouts
+            const pendingPayouts = analytics.pendingPayouts || 0;
+            document.getElementById('pendingPayouts').textContent = pendingPayouts;
+
+            // Update payout badge
+            const payoutBadge = document.getElementById('payoutBadge');
+            if (payoutBadge) {
+                if (pendingPayouts > 0) {
+                    payoutBadge.textContent = pendingPayouts;
+                    payoutBadge.style.display = 'flex';
+                } else {
+                    payoutBadge.style.display = 'none';
+                }
+            }
+
             // Popular tournament
-            const popularTournament = analytics.popularTournament;
-            document.getElementById('popularTournamentName').textContent = popularTournament.name || 'No tournaments';
+            const popularTournament = analytics.popularTournament || { name: 'No tournaments', current_participants: 0, max_participants: 0 };
             document.getElementById('popularTournamentStats').textContent =
                 `${popularTournament.current_participants || 0}/${popularTournament.max_participants || 0} participants`;
 
@@ -245,6 +298,223 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    // ====================================
+    //  Load Payouts Function
+    // ====================================
+    async function loadPayouts() {
+        try {
+            console.log('Loading payout requests...');
+            const response = await adminFetch('/api/admin/payout-requests');
+            if (!response) return;
+
+            const payouts = await response.json();
+            console.log('Loaded payouts:', payouts);
+
+            const payoutsContainer = document.getElementById('payoutsContainer');
+            if (payoutsContainer) {
+                payoutsContainer.innerHTML = '';
+
+                if (payouts.length === 0) {
+                    payoutsContainer.innerHTML = `
+                    <div class="empty-state">
+                        <h3>💸 No Payout Requests</h3>
+                        <p>No withdrawal requests have been submitted yet.</p>
+                        <small>Users can request withdrawals from their winnings balance.</small>
+                    </div>
+                `;
+                    return;
+                }
+
+                const table = document.createElement('table');
+                table.className = 'admin-table';
+
+                const header = document.createElement('thead');
+                header.innerHTML = `
+                <tr>
+                    <th>ID</th>
+                    <th>User</th>
+                    <th>Amount</th>
+                    <th>Requested</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            `;
+                table.appendChild(header);
+
+                const tbody = document.createElement('tbody');
+                payouts.forEach(payout => {
+                    const row = createPayoutRow(payout);
+                    tbody.appendChild(row);
+                });
+                table.appendChild(tbody);
+
+                payoutsContainer.appendChild(table);
+            }
+        } catch (error) {
+            console.error('Error loading payouts:', error);
+            showMessage('Failed to load payout requests', 'error');
+
+            // Show error state in container
+            const payoutsContainer = document.getElementById('payoutsContainer');
+            if (payoutsContainer) {
+                payoutsContainer.innerHTML = `
+                <div class="error-state">
+                    <h3>❌ Error Loading Payouts</h3>
+                    <p>Failed to load payout requests. Please check:</p>
+                    <ul>
+                        <li>Database connection</li>
+                        <li>payout_requests table exists</li>
+                        <li>Server is running</li>
+                    </ul>
+                    <button onclick="loadPayouts()" class="btn btn-primary">Retry</button>
+                </div>
+            `;
+            }
+        }
+    }
+
+    // ====================================
+    //  Create Payout Row Function
+    // ====================================
+    function createPayoutRow(payout) {
+        const row = document.createElement('tr');
+        const requestedDate = new Date(payout.requested_at).toLocaleDateString();
+
+        const statusClass = payout.status === 'pending' ? 'status-pending' :
+            payout.status === 'approved' ? 'status-approved' : 'status-rejected';
+
+        const actionButtons = payout.status === 'pending' ?
+            `<button class="btn btn-small btn-primary process-payout-btn"
+                data-payout-id="${payout.id}"
+                data-username="${payout.username}"
+                data-amount="${payout.amount}"
+                data-email="${payout.email}">
+            Process
+        </button>` :
+            '<span style="color: #666; font-style: italic;">Processed</span>';
+
+        row.innerHTML = `
+        <td>${payout.id}</td>
+        <td>${payout.username}<br><small>${payout.email}</small></td>
+        <td>₹${parseFloat(payout.amount).toFixed(2)}</td>
+        <td>${requestedDate}</td>
+        <td><span class="payout-status ${statusClass}">${payout.status}</span></td>
+        <td>${actionButtons}</td>
+    `;
+
+        // Add event listener for process button
+        const processBtn = row.querySelector('.process-payout-btn');
+        if (processBtn) {
+            processBtn.addEventListener('click', function () {
+                const payoutId = this.getAttribute('data-payout-id');
+                const username = this.getAttribute('data-username');
+                const amount = this.getAttribute('data-amount');
+                const email = this.getAttribute('data-email');
+                openPayoutModal(payoutId, username, amount, email);
+            });
+        }
+
+        return row;
+    }
+
+    // ====================================
+    //  Payout Modal Functions
+    // ====================================
+    function openPayoutModal(payoutId, username, amount, email) {
+        const modal = document.getElementById('payoutModal');
+        const payoutDetails = document.getElementById('payoutDetails');
+        const payoutIdInput = document.getElementById('payoutId');
+
+        if (payoutDetails) {
+            payoutDetails.innerHTML = `
+            <div class="payout-info">
+                <p><strong>User:</strong> ${username}</p>
+                <p><strong>Email:</strong> ${email}</p>
+                <p><strong>Amount:</strong> ₹${parseFloat(amount).toFixed(2)}</p>
+            </div>
+        `;
+        }
+
+        if (payoutIdInput) {
+            payoutIdInput.value = payoutId;
+        }
+
+        if (modal) {
+            modal.style.display = 'block';
+        }
+
+        // Store current payout ID globally
+        window.currentPayoutId = payoutId;
+    }
+
+    function closePayoutModal() {
+        const modal = document.getElementById('payoutModal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+        window.currentPayoutId = null;
+        const adminNotesField = document.getElementById('adminNotes');
+        if (adminNotesField) {
+            adminNotesField.value = '';
+        }
+    }
+
+    // ====================================
+    //  Process Payout Function
+    // ====================================
+    async function processPayout(action) {
+        if (!window.currentPayoutId || !['approve', 'reject'].includes(action)) {
+            alert('Invalid payout action');
+            return;
+        }
+
+        const adminNotes = document.getElementById('adminNotes')?.value || '';
+
+        // Confirm action
+        const confirmMessage = action === 'approve'
+            ? 'Are you sure you want to APPROVE this withdrawal request?'
+            : 'Are you sure you want to REJECT this withdrawal request? The amount will be refunded to the user.';
+
+        if (!confirm(confirmMessage)) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/admin/process-payout', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    payoutId: window.currentPayoutId,
+                    action: action,
+                    adminNotes: adminNotes
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+
+            const result = await response.json();
+
+            if (result.success) {
+                showMessage(`Payout request ${action}d successfully`, 'success');
+                closePayoutModal();
+                // Reload payouts list
+                loadPayouts();
+                // Update analytics
+                loadAnalytics();
+            } else {
+                showMessage(result.error || 'Failed to process payout', 'error');
+            }
+
+        } catch (error) {
+            console.error('Error processing payout:', error);
+            showMessage('Network error. Please try again.', 'error');
+        }
+    }
+
     // TOURNAMENT FUNCTIONS
     async function loadTournaments() {
         try {
@@ -308,13 +578,13 @@ document.addEventListener('DOMContentLoaded', function () {
             <td>${startDate}</td>
             <td class="tournament-actions-cell">
                 <div class="tournament-actions-group">
-                    <button class="btn btn-small btn-primary view-participants-btn" 
-                            data-tournament-id="${tournament.id}" 
+                    <button class="btn btn-small btn-primary view-participants-btn"
+                            data-tournament-id="${tournament.id}"
                             data-tournament-name="${tournament.name}">
                         👥 View Participants (${tournament.current_participants})
                     </button>
-                    <button class="btn btn-small btn-danger delete-tournament-btn" 
-                            data-tournament-id="${tournament.id}" 
+                    <button class="btn btn-small btn-danger delete-tournament-btn"
+                            data-tournament-id="${tournament.id}"
                             data-tournament-name="${tournament.name}">
                         🗑️ Delete Tournament
                     </button>
@@ -385,7 +655,6 @@ document.addEventListener('DOMContentLoaded', function () {
             showMessage('Network error. Please try again.', 'error');
         }
     }
-
 
     async function viewTournamentParticipants(tournamentId, tournamentName) {
         try {
@@ -593,7 +862,7 @@ document.addEventListener('DOMContentLoaded', function () {
             <td class="ban-status-cell">${banStatusHTML}</td>
             <td class="user-actions-cell">
                 <div class="user-actions-group">
-                    <button class="btn btn-small btn-primary update-winnings-btn" 
+                    <button class="btn btn-small btn-primary update-winnings-btn"
                             data-user-id="${user.id}" data-username="${user.username}">
                         💰 Update Winnings
                     </button>
@@ -843,7 +1112,6 @@ document.addEventListener('DOMContentLoaded', function () {
         return row;
     }
 
-
     // Tournament Management Functions
     function loadManageTournaments() {
         console.log('Loading tournament management...');
@@ -928,7 +1196,7 @@ document.addEventListener('DOMContentLoaded', function () {
             updateTournamentStatusBtn.addEventListener('click', updateTournamentStatus);
         }
 
-        // Export Participants Button  
+        // Export Participants Button
         const exportParticipantsBtn = document.getElementById('exportParticipantsBtn');
         if (exportParticipantsBtn) {
             exportParticipantsBtn.addEventListener('click', exportParticipants);
@@ -1197,8 +1465,6 @@ document.addEventListener('DOMContentLoaded', function () {
             window.open(`/tournament/${currentManagedTournamentId}`, '_blank');
         }
     }
-
-    // ===== NEW BUTTON FUNCTIONS =====
 
     // UPDATE TOURNAMENT STATUS FUNCTION
     async function updateTournamentStatus() {
@@ -1486,6 +1752,9 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         if (e.target === banModal) {
             closeBanModal();
+        }
+        if (e.target === document.getElementById('payoutModal')) {
+            closePayoutModal();
         }
     });
 
@@ -2051,7 +2320,13 @@ document.addEventListener('DOMContentLoaded', function () {
     }, 500);
 });
 
-// Make functions available globally
+// ====================================
+// Make functions globally available
+// ====================================
 window.initializeEnhancedTournamentCreation = initializeEnhancedTournamentCreation;
 window.autoFillTournamentName = autoFillTournamentName;
 window.updateTournamentPreview = updateTournamentPreview;
+window.loadPayouts = loadPayouts;
+window.openPayoutModal = openPayoutModal;
+window.closePayoutModal = closePayoutModal;
+window.processPayout = processPayout;
