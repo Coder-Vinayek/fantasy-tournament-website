@@ -4,9 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tournaments - Fantasy Tournament</title>
-    <!-- Your existing CSS -->
+    <meta name="description" content="Explore upcoming fantasy tournaments. Join, compete, and showcase your skills in a variety of competitive games.">
     <link rel="stylesheet" href="/css/style.css">
-    <!-- Enhanced Tournament CSS -->
     <link rel="stylesheet" href="/css/tournament-enhanced.css">
 </head>
 <body>
@@ -84,5 +83,106 @@
     </div>
 
     <script src="/js/tournaments.js"></script>
+
+    <style>
+        /* Enhanced filter styles */
+        .tournament-filters {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            padding: 20px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .filter-group label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .filter-group select,
+        .filter-group button {
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.1);
+            color: white;
+            font-size: 14px;
+            min-width: 120px;
+            cursor: pointer;
+        }
+
+        .filter-group select:focus,
+        .filter-group button:focus {
+            outline: none;
+            border-color: rgba(255,255,255,0.5);
+        }
+
+        .filter-group select option {
+            background: #1e1e2e;
+            color: white;
+        }
+
+        /* Loading and error states */
+        .loading-state {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-state {
+            text-align: center;
+            padding: 40px;
+            color: #ff6b6b;
+        }
+
+        .no-tournaments {
+            text-align: center;
+            padding: 60px 20px;
+            color: #888;
+            font-size: 16px;
+        }
+
+        @media (max-width: 768px) {
+            .tournament-filters {
+                flex-direction: column;
+                gap: 16px;
+            }
+
+            .filter-group {
+                flex-direction: row;
+                justify-content: space-between;
+                width: 100%;
+                max-width: 300px;
+                margin: 0 auto;
+            }
+        }
+    </style>
 </body>
 </html>
